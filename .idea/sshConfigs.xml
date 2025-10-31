@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="SshConfigs">
+    <configs>
+      <sshConfig authType="PASSWORD" host="alvis2.c3se.chalmers.se" id="004f79ea-5a4d-435e-a9c0-9c600245fae4" port="22" nameFormat="DESCRIPTIVE" username="difra" useOpenSSHConfig="true" />
+    </configs>
+  </component>
+</project>

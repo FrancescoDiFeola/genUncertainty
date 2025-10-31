@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WebServers">
+    <option name="servers">
+      <webServer id="d41621f3-142e-4085-9223-e136603cd190" name="alvis">
+        <fileTransfer rootFolder="/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/generative_uncertainty" accessType="SFTP" host="alvis2.c3se.chalmers.se" port="22" sshConfigId="004f79ea-5a4d-435e-a9c0-9c600245fae4" sshConfig="difra@alvis2.c3se.chalmers.se:22 password">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" keepAliveTimeout="0" passiveMode="true" shareSSLContext="true" />
+          </advancedOptions>
+        </fileTransfer>
+      </webServer>
+    </option>
+  </component>
+</project>
