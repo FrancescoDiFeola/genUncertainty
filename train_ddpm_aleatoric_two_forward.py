@@ -152,6 +152,120 @@ def sample_and_plot_batch_ddim_aleatoric(
     plt.close()
 
 
+@torch.no_grad()
+def sample_and_plot_batch_ddim_aleatoric_two_pass(
+        diffusion_model,
+        context_encoder,
+        condition_batch,
+        gt_batch,
+        writer,
+        step,
+        device,
+        tag="DDIM_Sampling",
+        scheduler=DDIMScheduler,
+        num_training_steps=1000,
+        num_inference_steps=50,
+        beta_start=0.0015,
+        beta_end=0.0205,
+):
+    """
+    DDIM sampling with two-pass inference:
+    1. First forward: predict error + uncertainty without context.
+    2. Second forward: condition on encoded (error + uncertainty) context using cross-attention.
+
+    Plots [Input | GT | Prediction | Uncertainty | Error].
+    """
+
+    diffusion_model.eval()
+    B, C, H, W = condition_batch.shape
+    scheduler.set_timesteps(num_inference_steps)
+    scheduler.alphas_cumprod = scheduler.alphas_cumprod.to(device)
+
+    x = torch.randn_like(condition_batch).to(device)
+    condition_batch = condition_batch.to(device)
+    gt_batch = gt_batch.to(device)
+
+    progress = tqdm(scheduler.timesteps, desc="DDIM Two-Pass Sampling")
+    uncertainty = None
+
+    for t in progress:
+        t_tensor = torch.tensor([t], device=device).long()
+
+        # -----------------------------
+        # 🌀 First Pass: no context (baseline prediction)
+        # -----------------------------
+        model_input = torch.cat([x, condition_batch], dim=1)
+
+        with autocast(enabled=True):
+            dummy_context = torch.zeros((B, 1, 128), device=device)
+            pred_error_1, pred_logvar_1 = diffusion_model(
+                x=model_input,
+                timesteps=t_tensor,
+                context=dummy_context
+            )
+
+            # Compute normalized uncertainty map for context
+            uncertainty_map = torch.exp(pred_logvar_1)
+            norm_uncertainty_map = norm_percentile(uncertainty_map)
+
+            # Concatenate predicted error and normalized uncertainty for conditioning
+            context_input = torch.cat([pred_error_1, norm_uncertainty_map], dim=1)  # (B, 2, H, W)
+            context_vector = context_encoder(context_input)  # (B, 1, 128)
+
+        # -----------------------------
+        # 🔁 Second Pass: conditioned refinement
+        # -----------------------------
+        with autocast(enabled=True):
+            pred_error_2, pred_logvar_2 = diffusion_model(
+                x=model_input,
+                timesteps=t_tensor,
+                context=context_vector
+            )
+
+        # -----------------------------
+        # 🧮 DDIM step update
+        # -----------------------------
+        x, _ = scheduler.step(pred_error_2, t_tensor, x)
+        uncertainty = pred_logvar_2  # store last uncertainty estimate
+
+    # =============================
+    # 🎨 Visualization
+    # =============================
+    pred_denoised = x
+    uncertainty_map = torch.exp(uncertainty)
+
+    def norm(x):
+        x = x.clone()
+        x -= x.amin(dim=(1, 2, 3), keepdim=True)
+        x /= (x.amax(dim=(1, 2, 3), keepdim=True) + 1e-8)
+        return x
+
+    ld = condition_batch.cpu().detach()
+    gt = gt_batch.cpu().detach()
+    pred = pred_denoised.cpu().detach()
+    unc = norm_percentile(uncertainty_map).cpu().detach()
+    error = norm_percentile(abs(pred - gt))
+
+    num_samples = B
+    fig, axes = plt.subplots(nrows=num_samples, ncols=5, figsize=(8, 2.5 * num_samples))
+    if B == 1:
+        axes = [axes]
+
+    for s in range(num_samples):
+        images = [ld[s], gt[s], pred[s], unc[s], error[s]]
+        titles = ["T1", "T2", "Prediction", "Uncertainty", "Error"]
+
+        for j in range(5):
+            ax = axes[s][j] if B > 1 else axes[0][j]
+            ax.set_axis_off()
+            ax.set_title(titles[j])
+            img = images[j].squeeze(0).cpu().numpy()
+            cmap = 'hot' if titles[j] in ["Uncertainty", "Error"] else 'gray'
+            ax.imshow(img, cmap=cmap)
+
+    plt.tight_layout()
+    writer.add_figure(tag, plt.gcf(), global_step=step)
+    plt.close()
 # ----------------------------------------------
 # ✅ Training script
 # ----------------------------------------------
