@@ -415,6 +415,7 @@ if __name__ == '__main__':
             if step % 150 == 0:
                 sample_and_plot_batch_ddim_aleatoric(
                     diffusion_model=diffusion,
+                    spatial_encoder=spatial_encoder,
                     condition_batch=img_A,
                     gt_batch=img_B,
                     writer=writer,
