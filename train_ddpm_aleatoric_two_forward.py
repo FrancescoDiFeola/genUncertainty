@@ -383,6 +383,7 @@ if __name__ == '__main__':
                 optimizer.zero_grad(set_to_none=True)
 
                 # === Encode Uncertainty as Context ===
+                context_input = torch.cat([pred_mean_var[0], pred_mean_var[1]], dim=1)
                 context_vector = spatial_encoder(norm_uncertainty_map)  # shape: (N, 1, cross_attention_dim)
                 # Predict noise + log variance
                 pred_mean_var, noisy_image = inferer(
