@@ -134,6 +134,7 @@ if __name__ == '__main__':
 
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
     diffusion = networks.init_ddpm_aleatoric_two_forward(args.diff_ckpt).to(DEVICE)
+    spatial_encoder = networks.SpatialContextEncoder(in_channels=2, cross_attention_dim=128).to(DEVICE)
 
     if NUM_GPUS > 1:
         diffusion = torch.nn.DataParallel(diffusion)
