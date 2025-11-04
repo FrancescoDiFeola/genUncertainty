@@ -113,6 +113,7 @@ if __name__ == '__main__':
     parser.add_argument('--dataset_csv', type=str, required=False)
     parser.add_argument('--output_dir', type=str, required=True)
     parser.add_argument('--diff_ckpt', type=str, required=True)
+    parser.add_argument('--context_ckpt', type=str, required=True)
     parser.add_argument('--experiment_name', type=str, required=True)
     parser.add_argument('--batch_size', default=1, type=int)
     parser.add_argument('--num_workers', default=4, type=int)
