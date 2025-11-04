@@ -138,6 +138,7 @@ if __name__ == '__main__':
 
     if NUM_GPUS > 1:
         diffusion = torch.nn.DataParallel(diffusion)
+        spatial_encoder = torch.nn.DataParallel(spatial_encoder)
 
     scheduler = DDIMScheduler(
         num_train_timesteps=1000,
