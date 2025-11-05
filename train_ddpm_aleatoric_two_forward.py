@@ -1,20 +1,16 @@
 import os
 import argparse
 import torch
-import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 from torch.cuda.amp import autocast, GradScaler
 from torch.utils.data import DataLoader
 from monai.utils import set_determinism
 from generative.networks.schedulers import DDPMScheduler
 from tqdm import tqdm
-import torchvision.utils as vutils
 from src.brlp.ldct_hdct_autoKL_dataset import LDCTHDCTAutoKLDataset
 from src.brlp.ldct_hdct_dataset import LDCTHDCTDataset
 from src.brlp import networks
 from inferers import DiffusionInferer
-import csv
-import numpy as np
 import matplotlib.pyplot as plt
 from skimage.metrics import peak_signal_noise_ratio as compute_psnr, structural_similarity as compute_ssim
 from generative.networks.schedulers import DDIMScheduler
@@ -163,10 +159,7 @@ def sample_and_plot_batch_ddim_aleatoric_two_pass(
         device,
         tag="DDIM_Sampling",
         scheduler=DDIMScheduler,
-        num_training_steps=1000,
         num_inference_steps=50,
-        beta_start=0.0015,
-        beta_end=0.0205,
 ):
     """
     DDIM sampling with two-pass inference:
@@ -290,17 +283,17 @@ if __name__ == '__main__':
     # ✅ Load dataset
     # ----------------------------------------------
     # Load the LDCT/HDCT dataset
-    """
     dataset = T1T2Dataset(
         annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_A.csv',
         annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_B.csv',
     )
+
     """
-    
     dataset = LDCTHDCTDataset(
         annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_LOWDOSE.csv',
         annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_FULLDOSE.csv',
     )
+    """
 
     # dataset = CTPETDataset(args)
 
@@ -317,7 +310,7 @@ if __name__ == '__main__':
     diffusion = networks.init_ddpm_aleatoric_two_forward(args.diff_ckpt).to(DEVICE)
     print(diffusion)
 
-    spatial_encoder = networks.SpatialContextEncoder(in_channels=1, cross_attention_dim=128).to(DEVICE)
+    spatial_encoder = networks.SpatialContextEncoder(in_channels=2, cross_attention_dim=128).to(DEVICE)
 
     if NUM_GPUS > 1:
         print(f"Using {NUM_GPUS} GPUs")
@@ -384,7 +377,7 @@ if __name__ == '__main__':
 
                 # === Encode Uncertainty as Context ===
                 context_input = torch.cat([pred_mean_var[0], pred_mean_var[1]], dim=1)
-                context_vector = spatial_encoder(norm_uncertainty_map)  # shape: (N, 1, cross_attention_dim)
+                context_vector = spatial_encoder(context_input)  # shape: (N, 1, cross_attention_dim)
                 # Predict noise + log variance
                 pred_mean_var, noisy_image = inferer(
                     inputs=img_B,
@@ -413,9 +406,9 @@ if __name__ == '__main__':
 
             torch.cuda.empty_cache()
             if step % 150 == 0:
-                sample_and_plot_batch_ddim_aleatoric(
+                sample_and_plot_batch_ddim_aleatoric_two_pass(
                     diffusion_model=diffusion,
-                    spatial_encoder=spatial_encoder,
+                    context_encoder=spatial_encoder,
                     condition_batch=img_A,
                     gt_batch=img_B,
                     writer=writer,
