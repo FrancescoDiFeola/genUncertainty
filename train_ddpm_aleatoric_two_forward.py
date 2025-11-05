@@ -279,6 +279,10 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
+    experiment_dir = os.path.join(args.output_dir, args.experiment_name)
+    os.makedirs(experiment_dir, exist_ok=True)
+    print(f"Checkpoint directory: {experiment_dir}")
+
     # ----------------------------------------------
     # ✅ Load dataset
     # ----------------------------------------------
