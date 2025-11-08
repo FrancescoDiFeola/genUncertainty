@@ -297,8 +297,8 @@ class SpatialContextEncoder(nn.Module):
         return out.unsqueeze(1)    # Motivation: convert to sequence format for attention (1 token per sample)
 
 
-def init_spatial_context_encoder(checkpoints_path: Optional[str] = None) -> nn.Module:
-    spatial_encoder = SpatialContextEncoder(in_channels=2, cross_attention_dim=128)
+def init_spatial_context_encoder(channels, checkpoints_path: Optional[str] = None) -> nn.Module:
+    spatial_encoder = SpatialContextEncoder(in_channels=channels, cross_attention_dim=128)
     return load_if(checkpoints_path, spatial_encoder)
 
 

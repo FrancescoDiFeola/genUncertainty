@@ -152,6 +152,7 @@ def sample_and_plot_batch_ddim_aleatoric(
 def sample_and_plot_batch_ddim_aleatoric_two_pass(
         diffusion_model,
         context_encoder,
+        channels,
         condition_batch,
         gt_batch,
         writer,
@@ -201,8 +202,12 @@ def sample_and_plot_batch_ddim_aleatoric_two_pass(
             uncertainty_map = torch.exp(pred_logvar_1)
             norm_uncertainty_map = norm_percentile(uncertainty_map)
 
-            # Concatenate predicted error and normalized uncertainty for conditioning
-            context_input = torch.cat([pred_error_1, norm_uncertainty_map], dim=1)  # (B, 2, H, W)
+            if channels == 2:
+                # Concatenate predicted error and normalized uncertainty for conditioning
+                context_input = torch.cat([norm_percentile(pred_error_1), norm_uncertainty_map], dim=1)  # (B, 2, H, W). # norm_uncertainty_map
+            else:
+                context_input = norm_uncertainty_map
+
             context_vector = context_encoder(context_input)  # (B, 1, 128)
 
         # -----------------------------
@@ -266,7 +271,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset_csv', required=False, type=str)
-    parser.add_argument('--output_dir', required=True, type=str)
+    parser.add_argument('--output_dir', default="/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/generative_uncertainty/checkpoints/", type=str)
     parser.add_argument('--diff_ckpt', default=None, type=str)
     parser.add_argument('--experiment_name', required=True, type=str)
     parser.add_argument('--annotation_A', required=False, type=str)
@@ -276,6 +281,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', default=16, type=int)
     parser.add_argument('--lr', default=1.5e-5, type=float)
     parser.add_argument('--diff_loss_weight', type=float, default=1.0)
+    parser.add_argument('--spatial_enc_channels', type=float, default=2)
 
     args = parser.parse_args()
 
@@ -314,7 +320,7 @@ if __name__ == '__main__':
     diffusion = networks.init_ddpm_aleatoric_two_forward(args.diff_ckpt).to(DEVICE)
     print(diffusion)
 
-    spatial_encoder = networks.SpatialContextEncoder(in_channels=2, cross_attention_dim=128).to(DEVICE)
+    spatial_encoder = networks.SpatialContextEncoder(in_channels=args.spatial_enc_channels, cross_attention_dim=128).to(DEVICE)
 
     if NUM_GPUS > 1:
         print(f"Using {NUM_GPUS} GPUs")
@@ -380,7 +386,11 @@ if __name__ == '__main__':
                 optimizer.zero_grad(set_to_none=True)
 
                 # === Encode Uncertainty as Context ===
-                context_input = torch.cat([pred_mean_var[0], pred_mean_var[1]], dim=1)
+                if args.spatial_enc_channels == 2:
+                    context_input = torch.cat([norm_percentile(pred_mean_var[0]), norm_uncertainty_map], dim=1) # context_input = torch.cat([pred_mean_var[0], pred_mean_var[1]], dim=1) unnormalized
+                else:
+                    context_input = norm_uncertainty_map  # pred_mean_var[1]
+
                 context_vector = spatial_encoder(context_input)  # shape: (N, 1, cross_attention_dim)
                 # Predict noise + log variance
                 pred_mean_var, noisy_image = inferer(
@@ -413,6 +423,7 @@ if __name__ == '__main__':
                 sample_and_plot_batch_ddim_aleatoric_two_pass(
                     diffusion_model=diffusion,
                     context_encoder=spatial_encoder,
+                    channels=args.spatial_enc_channels,
                     condition_batch=img_A,
                     gt_batch=img_B,
                     writer=writer,
@@ -427,7 +438,7 @@ if __name__ == '__main__':
 
         if epoch % 50 == 0:
             # Save the model after each epoch.
-            torch.save(diffusion.state_dict(), os.path.join(args.output_dir, f'diffusion-ep-{epoch}.pth'))
-            torch.save(spatial_encoder.state_dict(), os.path.join(args.output_dir, f'spatial_encoder-ep-{epoch}.pth'))
+            torch.save(diffusion.state_dict(), os.path.join(experiment_dir, f'diffusion-ep-{epoch}.pth'))
+            torch.save(spatial_encoder.state_dict(), os.path.join(experiment_dir, f'spatial_encoder-ep-{epoch}.pth'))
 
     print("Training complete.")

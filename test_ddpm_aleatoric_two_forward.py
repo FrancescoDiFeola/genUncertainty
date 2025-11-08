@@ -39,6 +39,8 @@ def norm_percentile(x, pmin=1, pmax=99):
 def run_inference_and_log(
         diffusion_model,
         context_encoder,
+        channels,
+        dir,
         condition_batch,
         gt_batch,
         writer,
@@ -77,8 +79,12 @@ def run_inference_and_log(
             uncertainty_map = torch.exp(pred_logvar_1)
             norm_uncertainty_map = norm_percentile(uncertainty_map)
 
-            # Concatenate predicted error and normalized uncertainty for conditioning
-            context_input = torch.cat([pred_error_1, norm_uncertainty_map], dim=1)  # (B, 2, H, W)
+            if channels == 2:
+                # Concatenate predicted error and normalized uncertainty for conditioning
+                context_input = torch.cat([norm_percentile(pred_error_1), norm_uncertainty_map], dim=1)  # (B, 2, H, W). # norm_uncertainty_map
+            else:
+                context_input = norm_uncertainty_map
+
             context_vector = context_encoder(context_input)  # (B, 1, 128)
 
         # -----------------------------
@@ -90,6 +96,17 @@ def run_inference_and_log(
                 timesteps=t_tensor,
                 context=context_vector
             )
+
+        # Second-pass uncertainty (store + save PNG)
+        second_pass_uncertainty = torch.exp(pred_logvar_2).detach()
+        norm_second = norm_percentile(second_pass_uncertainty).cpu()  # (B,1,H,W)
+
+        # Save each sample's uncertainty as PNG
+        if int(step) == 1:
+            for b in range(B):
+                arr = norm_second[b].squeeze(0).numpy()
+                png_path = os.path.join(dir, f"sample{b}_{step}_t_step{int(t)}_epoch_350.png")
+                plt.imsave(png_path, arr, cmap='hot')
 
         # -----------------------------
         # 🧮 DDIM step update
@@ -146,15 +163,18 @@ def run_inference_and_log(
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset_csv', type=str, required=False)
-    parser.add_argument('--output_dir', type=str, required=True)
+    parser.add_argument('--output_dir', type=str,default="/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/generative_uncertainty/checkpoints/", required=False)
     parser.add_argument('--diff_ckpt', type=str, required=True)
     parser.add_argument('--context_ckpt', type=str, required=True)
     parser.add_argument('--experiment_name', type=str, required=True)
     parser.add_argument('--batch_size', default=1, type=int)
     parser.add_argument('--num_workers', default=4, type=int)
+    parser.add_argument('--spatial_enc_channels', type=int, default=2)
     args = parser.parse_args()
 
-    os.makedirs(args.output_dir, exist_ok=True)
+    experiment_dir = os.path.join(args.output_dir, args.experiment_name)
+    os.makedirs(experiment_dir, exist_ok=True)
+    print(f"Checkpoint directory: {experiment_dir}")
     
     dataset = T1T2Dataset(
         annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_A_test.csv',
@@ -170,7 +190,7 @@ if __name__ == '__main__':
 
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
     diffusion = networks.init_ddpm_aleatoric_two_forward(args.diff_ckpt).to(DEVICE)
-    spatial_encoder = networks.init_spatial_context_encoder(args.context_ckpt).to(DEVICE)
+    spatial_encoder = networks.init_spatial_context_encoder(args.spatial_enc_channels, args.context_ckpt).to(DEVICE)
 
     if NUM_GPUS > 1:
         diffusion = torch.nn.DataParallel(diffusion)
@@ -185,7 +205,7 @@ if __name__ == '__main__':
     )
 
     writer = SummaryWriter(comment=args.experiment_name)
-    csv_path = os.path.join(args.output_dir, f"{args.experiment_name}_metrics_epoch_450.csv")
+    csv_path = os.path.join(experiment_dir, f"{args.experiment_name}_metrics_epoch_350.csv")
 
     with open(csv_path, mode='w', newline='') as csvfile:
         fieldnames = ['Sample', 'MSE', 'PSNR', 'SSIM']
@@ -196,6 +216,8 @@ if __name__ == '__main__':
             run_inference_and_log(
                 diffusion_model=diffusion,
                 context_encoder=spatial_encoder,
+                channels=args.spatial_enc_channels,
+                dir=experiment_dir,
                 condition_batch=batch['A'],
                 gt_batch=batch['B'],
                 writer=writer,
