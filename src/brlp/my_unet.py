@@ -11,7 +11,153 @@ def zero_module(module: nn.Module) -> nn.Module:
     for p in module.parameters():
         p.detach().zero_()
     return module
-    
+
+def get_timestep_embedding(timesteps: torch.Tensor, embedding_dim: int, max_period: int = 10000) -> torch.Tensor:
+    """
+    Create sinusoidal timestep embeddings following the implementation in Ho et al. "Denoising Diffusion Probabilistic
+    Models" https://arxiv.org/abs/2006.11239.
+
+    Args:
+        timesteps: a 1-D Tensor of N indices, one per batch element.
+        embedding_dim: the dimension of the output.
+        max_period: controls the minimum frequency of the embeddings.
+    """
+    if timesteps.ndim != 1:
+        raise ValueError("Timesteps should be a 1d-array")
+
+    half_dim = embedding_dim // 2
+    exponent = -math.log(max_period) * torch.arange(start=0, end=half_dim, dtype=torch.float32, device=timesteps.device)
+    freqs = torch.exp(exponent / half_dim)
+
+    args = timesteps[:, None].float() * freqs[None, :]
+    embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
+
+    # zero pad
+    if embedding_dim % 2 == 1:
+        embedding = torch.nn.functional.pad(embedding, (0, 1, 0, 0))
+
+    return embedding
+
+class DiffusionUNetWithUncertainty(nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        spatial_dims: int = 2,
+        logvar_head_channels: int = 1,
+        **unet_kwargs,
+    ):
+        """
+        Wrapper around MONAI's DiffusionModelUNet to add a log-variance head.
+
+        Args:
+            in_channels: Input channels (e.g., 2 for [x_t | condition]).
+            out_channels: Output channels for noise prediction.
+            logvar_head_channels: Channels for log-var prediction (typically 1).
+            spatial_dims: 2D or 3D diffusion.
+            **unet_kwargs: All other kwargs forwarded to DiffusionModelUNet.
+        """
+        super().__init__()
+
+        # Create base U-Net
+        self.unet = DiffusionModelUNet(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            spatial_dims=spatial_dims,
+            **unet_kwargs
+        )
+
+        # Determine the channel size before final output
+        hidden_channels = self.unet.block_out_channels[0]  # Used in final conv
+
+        # Define logvar prediction head (parallel to final output)
+        self.logvar_head = nn.Sequential(
+            nn.GroupNorm(num_groups=32, num_channels=hidden_channels, eps=1e-6, affine=True),
+            nn.SiLU(),
+            Convolution(
+                spatial_dims=spatial_dims,
+                in_channels=hidden_channels,
+                out_channels=logvar_head_channels,
+                strides=1,
+                kernel_size=3,
+                padding=1,
+                conv_only=True,
+            )
+        )
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        timesteps: torch.Tensor,
+        context: torch.Tensor | None = None,
+        class_labels: torch.Tensor | None = None,
+        down_block_additional_residuals: tuple[torch.Tensor] | None = None,
+        mid_block_additional_residual: torch.Tensor | None = None,
+    ):
+        """
+        Same as DiffusionModelUNet forward, but returns (pred_noise, pred_logvar)
+
+        Returns:
+            - pred_noise: output from base U-Net
+            - pred_logvar: output from auxiliary head (same size as pred_noise)
+        """
+        # ==== Copy forward logic ====
+
+        # 1. timestep embedding
+        t_emb = get_timestep_embedding(timesteps, self.block_out_channels[0]).to(dtype=x.dtype)
+        emb = self.time_embed(t_emb)
+
+
+
+        # 2. optional class embedding
+        if self.unet.num_class_embeds is not None:
+            if class_labels is None:
+                raise ValueError("class_labels must be provided for class-conditional model.")
+            class_emb = self.unet.class_embedding(class_labels).to(dtype=x.dtype)
+            emb = emb + class_emb
+
+        # 3. initial convolution
+        h = self.unet.conv_in(x)
+
+        # 4. down blocks
+        down_block_res_samples: list[torch.Tensor] = [h]
+        if context is not None and not self.unet.with_conditioning:
+            raise ValueError("Model was not initialized with conditioning support.")
+
+        for downsample_block in self.unet.down_blocks:
+            h, res_samples = downsample_block(hidden_states=h, temb=emb, context=context)
+            for residual in res_samples:
+                down_block_res_samples.append(residual)
+
+        # Optional ControlNet residuals
+        if down_block_additional_residuals is not None:
+            new_res = []
+            for d, r in zip(down_block_res_samples, down_block_additional_residuals):
+                new_res.append(d + r)
+            down_block_res_samples = tuple(new_res)
+
+        # 5. middle block
+        h = self.unet.middle_block(h, temb=emb, context=context)
+
+        if mid_block_additional_residual is not None:
+            h = h + mid_block_additional_residual
+
+        # 6. up blocks
+        for up_block in self.unet.up_blocks:
+            num_res = len(up_block.resnets)
+            res = down_block_res_samples[-num_res:]
+            down_block_res_samples = down_block_res_samples[:-num_res]
+            h = up_block(h, res_hidden_states_list=res, temb=emb, context=context)
+
+
+        # 7. predict noise
+        pred_noise = self.unet.out(h)
+
+        # 8. predict log-variance
+        pred_logvar = self.logvar_head(h)
+
+        return (pred_noise, pred_logvar)
+
 class DiffusionModelUNetAleatoricConcat(DiffusionModelUNet):
     def __init__(self, *args, **kwargs):
         # Store the original out_channels
