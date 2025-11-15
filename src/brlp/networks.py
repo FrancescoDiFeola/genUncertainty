@@ -146,6 +146,44 @@ def init_ddpm_aleatoric_two_forward(checkpoints_path: Optional[str] = None) -> n
     )
     return load_if(checkpoints_path, ddpm)
 
+def init_ddpm_uncertainty_model(
+    checkpoints_path: Optional[str] = None,
+    use_cross_attention: bool = False,
+) -> nn.Module:
+    """
+    Initialize a DDPM model with aleatoric uncertainty head.
+
+    Args:
+        checkpoints_path: Optional path to pretrained model weights.
+        use_cross_attention: If True, enables cross-attention conditioning (two-forward).
+                             If False, uses only spatial concatenation (concat-only).
+
+    Returns:
+        An instance of DiffusionUNetWithUncertainty.
+    """
+
+    ddpm = DiffusionUNetWithUncertainty(
+        spatial_dims=2,
+        in_channels=2,                      # Concatenated input: [x_t | x_condition]
+        out_channels=1,                     # Predict noise
+        logvar_head_channels=1,             # Predict log(variance)
+        num_res_blocks=(2, 2, 2, 2),
+        num_channels=(64, 128, 128, 256),
+        attention_levels=(False, False, True, True),
+        norm_num_groups=32,
+        norm_eps=1e-6,
+        resblock_updown=False,
+        num_head_channels=8,
+        with_conditioning=use_cross_attention,         # 🔺 Controls cross-attention
+        cross_attention_dim=128 if use_cross_attention else None,
+        transformer_num_layers=1,
+        upcast_attention=False,
+        use_flash_attention=True,
+        dropout_cattn=0.0,
+    )
+
+    return load_if(checkpoints_path, ddpm)
+
 def init_ddpm(checkpoints_path: Optional[str] = None) -> nn.Module:
     ddpm = DiffusionModelUNet(
         spatial_dims=2,  # 2D data (CT slices); use 3 for volumetric 3D CT
