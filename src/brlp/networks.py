@@ -324,6 +324,15 @@ class SpatialContextEncoder(nn.Module):
             # Motivation: final projection to match the dimension expected by cross-attention layers in the U-Net (e.g., 128) Even when mapping from 128 to 128, this linear layer can help by learning to better align the feature representation with what the attention mechanism needs
         )
 
+        self._init_weights()
+
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
+                init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    init.constant_(m.bias, 0)
+                    
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Args:
