@@ -271,7 +271,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset_csv', required=False, type=str)
-    parser.add_argument('--output_dir', default="/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/generative_uncertainty/checkpoints/", type=str)
+    parser.add_argument('--output_dir', default="/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/", type=str)
     parser.add_argument('--diff_ckpt', default=None, type=str)
     parser.add_argument('--experiment_name', required=True, type=str)
     parser.add_argument('--annotation_A', required=False, type=str)
@@ -281,7 +281,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', default=16, type=int)
     parser.add_argument('--lr', default=1.5e-5, type=float)
     parser.add_argument('--diff_loss_weight', type=float, default=1.0)
-    parser.add_argument('--spatial_enc_channels', type=float, default=2)
+    parser.add_argument('--spatial_enc_channels', type=int, default=2)
 
     args = parser.parse_args()
 
@@ -304,7 +304,6 @@ if __name__ == '__main__':
         annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_FULLDOSE.csv',
     )
     """
-
     # dataset = CTPETDataset(args)
 
     train_loader = DataLoader(dataset=dataset,
@@ -317,7 +316,7 @@ if __name__ == '__main__':
     # ----------------------------------------------
     # ✅ Load diffusion model
     # ----------------------------------------------
-    diffusion = networks.init_ddpm_aleatoric_two_forward(args.diff_ckpt).to(DEVICE)
+    diffusion = networks.init_ddpm_uncertainty(args.diff_ckpt, use_cross_attention=True).to(DEVICE)
     print(diffusion)
 
     spatial_encoder = networks.SpatialContextEncoder(in_channels=args.spatial_enc_channels, cross_attention_dim=128).to(DEVICE)

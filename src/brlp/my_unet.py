@@ -1,8 +1,12 @@
+import importlib
+from typing import Sequence
+from monai.utils import ensure_tuple_rep
 from generative.networks.nets import DiffusionModelUNet
 import torch.nn as nn
 import torch
 from monai.networks.blocks.convolutions import Convolution
 import torch.nn.functional as F
+import math
 
 def zero_module(module: nn.Module) -> nn.Module:
     """
@@ -104,8 +108,8 @@ class DiffusionUNetWithUncertainty(nn.Module):
         # ==== Copy forward logic ====
 
         # 1. timestep embedding
-        t_emb = get_timestep_embedding(timesteps, self.block_out_channels[0]).to(dtype=x.dtype)
-        emb = self.time_embed(t_emb)
+        t_emb = get_timestep_embedding(timesteps, self.unet.block_out_channels[0]).to(dtype=x.dtype)
+        emb = self.unet.time_embed(t_emb)
 
 
 

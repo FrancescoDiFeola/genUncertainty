@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #SBATCH -A NAISS2024-5-577 -p alvis
 #SBATCH -N 1 --gpus-per-node=A40:1
-#SBATCH -t 0-08:00:00
+#SBATCH -t 0-02:00:00
 # Output files
 #SBATCH --error=./error/job_%J.err
 #SBATCH --output=./output/out_%J.out
@@ -20,7 +20,7 @@ cd /mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/venv2
 source bin/activate
 
 # Executes the code 
-cd /mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/generative_uncertainty
+cd /mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion
 
 # Train HERE YOU RUN YOUR PROGRAM
 
@@ -49,5 +49,5 @@ cd /mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/generative_uncertainty
 # python3 ./test_ddpm_with_double_refiner.py  --num_workers 32 --experiment_name "ddpm_with_double_refiner_T1T2" --output_dir "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/uncertainty_diffusion/checkpoints/ddpm_with_double_refiner_T1T2" --diff_ckpt "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/uncertainty_diffusion/checkpoints/ddpm_with_double_refiner_T1T2/diffusion-ep-550.pth" --refiner1_ckpt "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/uncertainty_diffusion/checkpoints/ddpm_with_double_refiner_T1T2/error_refiner-ep-550.pth" --refiner2_ckpt "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/uncertainty_diffusion/checkpoints/ddpm_with_double_refiner_T1T2/variance_refiner-ep-550.pth"
 
 
-# python3 ./train_ddpm_aleatoric_two_forward.py --num_workers 8 --experiment_name "two_forward_concatenation_error_variance_normalized_T1T2" --spatial_enc_channels 2
-python3 ./test_ddpm_aleatoric_two_forward.py  --spatial_enc_channels 1 --num_workers 8 --experiment_name "two_forward_variance_normalized_T1T2"  --diff_ckpt "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/generative_uncertainty/checkpoints/two_forward_variance_normalized_T1T2/diffusion-ep-350.pth" --context_ckpt "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/generative_uncertainty/checkpoints/two_forward_variance_normalized_T1T2/spatial_encoder-ep-350.pth"
+# python3 ./train_ddpm_aleatoric_two_forward.py --num_workers 8 --experiment_name "wrapped_unet_two_forward_variance_normalized_T1T2" --spatial_enc_channels 1
+python3 ./test_ddpm_aleatoric_two_forward.py  --spatial_enc_channels 1 --num_workers 8 --experiment_name "two_forward_variance_normalized_T1T2"  --diff_ckpt "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/generative_uncertainty/checkpoints/two_forward_variance_normalized_T1T2/diffusion-ep-300.pth" --context_ckpt "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/generative_uncertainty/checkpoints/two_forward_variance_normalized_T1T2/spatial_encoder-ep-300.pth"

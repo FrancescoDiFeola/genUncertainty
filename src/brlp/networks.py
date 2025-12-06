@@ -11,7 +11,7 @@ from generative.networks.nets import (
     DiffusionModelUNet,
     ControlNet
 )
-from .my_unet import DiffusionModelUNetAleatoricConcat,  DiffusionModelUNetAleatoricEpistemic
+from .my_unet import DiffusionModelUNetAleatoricConcat, DiffusionUNetWithUncertainty
 
 """
 def load_if(checkpoints_path: Optional[str], network: nn.Module) -> nn.Module:
@@ -146,7 +146,7 @@ def init_ddpm_aleatoric_two_forward(checkpoints_path: Optional[str] = None) -> n
     )
     return load_if(checkpoints_path, ddpm)
 
-def init_ddpm_uncertainty_model(
+def init_ddpm_uncertainty(
     checkpoints_path: Optional[str] = None,
     use_cross_attention: bool = False,
 ) -> nn.Module:
