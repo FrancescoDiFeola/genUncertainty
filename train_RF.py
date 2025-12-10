@@ -8,17 +8,11 @@ from torch.utils.data import DataLoader
 from monai.utils import set_determinism
 from monai.networks.schedulers import RFlowScheduler
 from tqdm import tqdm
-import torchvision.utils as vutils
-from src.brlp.ldct_hdct_autoKL_dataset import LDCTHDCTAutoKLDataset
 from src.brlp.ldct_hdct_dataset import LDCTHDCTDataset
 from src.brlp import networks
-from inferers import DiffusionInferer
-import csv
-import numpy as np
 import matplotlib.pyplot as plt
-from skimage.metrics import peak_signal_noise_ratio as compute_psnr, structural_similarity as compute_ssim
 from src.brlp.T1_T2_dataset import T1T2Dataset
-from src.brlp.CTPET_dataset import CTPETDataset
+
 
 # -----------------------
 # ✅ Set environment
@@ -57,14 +51,14 @@ def run_inference(
     condition_batch = condition_batch.to(device)
     gt_batch = gt_batch.to(device)
 
-    all_next_timesteps = torch.cat((scheduler.timesteps[1:], torch.tensor([0], dtype=scheduler.timesteps.dtype)))
+    all_next_timesteps = torch.cat((scheduler.timesteps[1:],torch.tensor([0], dtype=scheduler.timesteps.dtype, device=scheduler.timesteps.device)))
     for t, next_t in tqdm(zip(scheduler.timesteps, all_next_timesteps), total = min(len(scheduler.timesteps), len(all_next_timesteps)),):
-
+        t_tensor = torch.tensor([t], device=device).long()
         # Reconstruct input with current latent
         model_input = torch.cat([x, condition_batch], dim=1)
 
         with autocast(enabled=True):
-            predicted_velocity = diffusion_model(x=model_input, timesteps=timesteps, context=None)
+            predicted_velocity = diffusion_model(x=model_input, timesteps=t_tensor, context=None)
 
         x, _ = scheduler.step(predicted_velocity, t, x, next_t)
 
@@ -127,7 +121,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset_csv', required=False, type=str)
-    parser.add_argument('--output_dir', required=True, type=str)
+    parser.add_argument('--output_dir', default="/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/", type=str)
     parser.add_argument('--diff_ckpt', default=None, type=str)
     parser.add_argument('--experiment_name', required=True, type=str)
     parser.add_argument('--annotation_A', required=False, type=str)
@@ -141,23 +135,26 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
+    experiment_dir = os.path.join(args.output_dir, args.experiment_name)
+    os.makedirs(experiment_dir, exist_ok=True)
+    print(f"Checkpoint directory: {experiment_dir}")
     # -----------------------
     # ✅ Load dataset
     # -----------------------
     # Load the LDCT/HDCT dataset
-
+    """
     dataset = T1T2Dataset(
         annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_A.csv',
         annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_B.csv',
 
     )
-
     """
+
     dataset = LDCTHDCTDataset(
         annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_LOWDOSE.csv',
         annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_FULLDOSE.csv',
     )
-    """
+
 
     # dataset = CTPETDataset(args)
 
@@ -184,7 +181,7 @@ if __name__ == '__main__':
         use_discrete_timesteps=False,  # impostato a False nel codice di MAISI
         sample_method='uniform',  # impostato come in MAISI
         use_timestep_transform=True,
-        base_img_size_numel=512*512,
+        base_img_size_numel=256*256,
         spatial_dim=2
     )
 
@@ -193,11 +190,11 @@ if __name__ == '__main__':
         use_discrete_timesteps=False,  # impostato a False nel codice di MAISI
         sample_method='uniform',  # impostato come in MAISI
         use_timestep_transform=True,
-        base_img_size_numel=512*512,
+        base_img_size_numel=256*256,
         spatial_dim=2
     )
 
-    inference_scheduler.set_timesteps(num_inference_steps=30, device=DEVICE, input_img_size_numel=512 * 512)
+    inference_scheduler.set_timesteps(num_inference_steps=30, device=DEVICE, input_img_size_numel=256*256)
 
     scaler = GradScaler()
     writer = SummaryWriter(comment=args.experiment_name)
@@ -259,6 +256,6 @@ if __name__ == '__main__':
 
         if epoch % 50 == 0:
             # Save the model after each epoch.
-            torch.save(diffusion.state_dict(), os.path.join(args.output_dir, f'diffusion-ep-{epoch + args.epoch_start}.pth'))
+            torch.save(diffusion.state_dict(), os.path.join(experiment_dir, f'diffusion-ep-{epoch}.pth'))
 
     print("Training complete.")
