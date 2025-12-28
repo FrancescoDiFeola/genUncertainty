@@ -497,7 +497,7 @@ if __name__ == '__main__':
     scheduler.set_timesteps(num_inference_steps=30, device=DEVICE, input_img_size_numel=256*256)
 
     writer = SummaryWriter(comment=args.experiment_name)
-    csv_path = os.path.join(experiment_dir, f"{args.experiment_name}_metrics_iterative_refinement_without_twoforward_epoch_300.csv")
+    csv_path = os.path.join(experiment_dir, f"{args.experiment_name}_metrics_iterative_refinement_without_twoforward_epoch_900.csv")
 
     with open(csv_path, mode='w', newline='') as csvfile:
         fieldnames = ['Sample', 'MSE', 'PSNR', 'SSIM', 'Pearson', 'Spearman']

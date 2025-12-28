@@ -4,31 +4,16 @@ import torch
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 from torch.cuda.amp import autocast, GradScaler
-# from torch.utils.data import DataLoader
-from monai.data import CacheDataset, DataLoader
+from torch.utils.data import DataLoader
 from monai.utils import set_determinism
-from monai.transforms import (
-    Compose,
-    LoadImaged,
-    ScaleIntensityRangeD,
-    EnsureChannelFirstd,
-    ToTensord,
-)
-from generative.networks.schedulers import DDPMScheduler
+from monai.networks.schedulers import RFlowScheduler
 from tqdm import tqdm
-import torchvision.utils as vutils
-from src.brlp.ldct_hdct_autoKL_dataset import LDCTHDCTAutoKLDataset
 from src.brlp.ldct_hdct_dataset import LDCTHDCTDataset
 from src.brlp import networks
-from inferers import DiffusionInferer
-import csv
-import numpy as np
 import matplotlib.pyplot as plt
-from skimage.metrics import peak_signal_noise_ratio as compute_psnr, structural_similarity as compute_ssim
-from generative.networks.schedulers import DDIMScheduler
 from src.brlp.T1_T2_dataset import T1T2Dataset
-from src.brlp.CTPET_dataset import CTPETDataset
-from src.brlp.Mri2DSlice_dataset import Mri2DSlicedataset
+
+
 # -----------------------
 # ✅ Set environment
 # -----------------------
@@ -43,7 +28,7 @@ NUM_GPUS = torch.cuda.device_count()
 
 
 @torch.no_grad()
-def sample_and_plot_batch_ddim(
+def run_inference(
         diffusion_model,
         condition_batch,
         gt_batch,
@@ -52,43 +37,32 @@ def sample_and_plot_batch_ddim(
         device,
         scheduler,
         tag="DDIM_Sampling",
-        num_training_steps=1000,
-        num_inference_steps=50,
-        beta_start=0.0015,
-        beta_end=0.0205,
+
 ):
     """
-    DDIM sampling + tensorboard batch display with uncertainty.
+    sampling + tensorboard batch display with uncertainty.
     Plots [LD | GT | Prediction | Uncertainty] per row.
     """
 
     diffusion_model.eval()
-    B, _, _, _ = condition_batch.shape
+    B, C, H, W = condition_batch.shape
 
-    scheduler.set_timesteps(num_inference_steps)
-    scheduler.alphas_cumprod = scheduler.alphas_cumprod.to(device)
     x = torch.randn_like(condition_batch).to(device)
     condition_batch = condition_batch.to(device)
     gt_batch = gt_batch.to(device)
 
-    progress = tqdm(scheduler.timesteps, desc="DDIM Sampling")
-
-    for t in progress:
-        # t_tensor = torch.tensor([t], device=device).long()
-
-        # timestep tensor must match batch size: [B]
-        t_tensor = torch.full((B,), t, device=device, dtype=torch.long)
-
+    all_next_timesteps = torch.cat((scheduler.timesteps[1:],torch.tensor([0], dtype=scheduler.timesteps.dtype, device=scheduler.timesteps.device)))
+    for t, next_t in tqdm(zip(scheduler.timesteps, all_next_timesteps), total = min(len(scheduler.timesteps), len(all_next_timesteps)),):
+        t_tensor = torch.tensor([t], device=device).long()
         # Reconstruct input with current latent
         model_input = torch.cat([x, condition_batch], dim=1)
 
         with autocast(enabled=True):
-            pred_noise = diffusion_model(x=model_input, timesteps=t_tensor, context=None)
+            predicted_velocity = diffusion_model(x=model_input, timesteps=t_tensor, context=None)
 
-        x, _ = scheduler.step(pred_noise, t_tensor, x)
+        x, _ = scheduler.step(predicted_velocity, t, x, next_t)
 
-
-    pred_denoised = x
+    final_output = x
 
     # ---- Plotting ---- #
     def norm(x):
@@ -111,9 +85,9 @@ def sample_and_plot_batch_ddim(
 
     ld = condition_batch.cpu().detach()
     gt = gt_batch.cpu().detach()
-    pred = pred_denoised.cpu().detach()
-    error = norm_percentile(abs(pred-gt))
-    
+    pred = final_output.cpu().detach()
+    error = norm_percentile(abs(pred - gt))
+
     # Create figure
     num_samples = B
     fig, axes = plt.subplots(nrows=num_samples, ncols=4, figsize=(8, 2.5 * num_samples))
@@ -159,82 +133,19 @@ if __name__ == '__main__':
     parser.add_argument('--epoch_start', default=0, type=float)
     parser.add_argument('--diff_loss_weight', type=float, default=1.0)
 
-    parser.add_argument('--dataroot', required=True, help='path to images (should have subfolders trainA, trainB, valA, valB, etc)')
-    parser.add_argument('--mri_modalities', default=["t1n", "t1c", "t2w", "t2f"], help='which MRI modality to use', nargs='+', type=str)
-    parser.add_argument('--slice_range', type=int, nargs=2, default=[0, 999],help='Range of slice indices to include, e.g., --slice_range 30 128')
-    parser.add_argument('--phase', type=str, default=None, help='train or test, if None dont split')
-    parser.add_argument('--under_sample_dataset', action="store_true", help='True undersample the dataset deleting one slice every three')
-
     args = parser.parse_args()
-
 
     experiment_dir = os.path.join(args.output_dir, args.experiment_name)
     os.makedirs(experiment_dir, exist_ok=True)
-
+    print(f"Checkpoint directory: {experiment_dir}")
     # -----------------------
     # ✅ Load dataset
     # -----------------------
     # Load the LDCT/HDCT dataset
-    
-    """
     dataset = T1T2Dataset(
         annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_A.csv',
         annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_B.csv',
 
-    )
-    """
-    ### with MONAI Cache Dataset ######
-    base_ds = Mri2DSlicedataset(args)
-
-    # 2) build MONAI-style data list with file paths
-    data_list = []
-    for s in base_ds.samples:
-        subject = s["subject"]
-        slice_idx = s["slice_idx"]
-
-        A_path = base_ds.subject_dict[subject][base_ds.A_mod][slice_idx]
-        B_path = base_ds.subject_dict[subject][base_ds.B_mod][slice_idx]
-
-        data_list.append(
-            {
-                "A": A_path,
-                "B": B_path,
-                "subject": subject,
-                "slice_idx": slice_idx,
-                # optional: keep modality mapping here if you like
-                "A_mod": base_ds.A_mod,
-                "B_mod": base_ds.B_mod,
-            }
-        )
-
-    train_transforms = Compose(
-        [
-            # 1) load arrays from npy paths under keys "A" and "B"
-            LoadImaged(keys=["A", "B"]),  # supports .npy, .nii, etc.
-
-            # 2) map [0, 1] -> [-1, 1], like: x * 2 - 1
-            ScaleIntensityRangeD(
-                keys=["A", "B"],
-                a_min=0.0,
-                a_max=1.0,
-                b_min=-1.0,
-                b_max=1.0,
-                clip=True,
-            ),
-
-            # 3) ensure channel-first: (H, W) -> (1, H, W)
-            EnsureChannelFirstd(keys=["A", "B"]),
-
-            # 4) numpy -> torch.Tensor
-            ToTensord(keys=["A", "B"]),
-        ]
-    )
-
-    dataset = CacheDataset(
-        data=data_list,
-        transform=train_transforms,
-        cache_rate=1.0,  # 1.0 = cache all; lower if memory is limited
-        num_workers=args.num_workers,
     )
 
     """
@@ -244,8 +155,8 @@ if __name__ == '__main__':
     )
     """
 
-    #dataset = CTPETDataset(args)
-    
+    # dataset = CTPETDataset(args)
+
     train_loader = DataLoader(dataset=dataset,
                               batch_size=args.batch_size,
                               shuffle=True,
@@ -258,38 +169,40 @@ if __name__ == '__main__':
     # -----------------------
     diffusion = networks.init_ddpm(args.diff_ckpt).to(DEVICE)
 
-
     if NUM_GPUS > 1:
         print(f"Using {NUM_GPUS} GPUs")
         diffusion = torch.nn.DataParallel(diffusion)
 
     optimizer = torch.optim.AdamW(diffusion.parameters(), lr=args.lr)
 
-    scheduler = DDPMScheduler(
+    scheduler = RFlowScheduler(
         num_train_timesteps=1000,
-        schedule='scaled_linear_beta',
-        beta_start=0.0015,
-        beta_end=0.0205
+        use_discrete_timesteps=False,  # impostato a False nel codice di MAISI
+        sample_method='uniform',  # impostato come in MAISI
+        use_timestep_transform=True,
+        base_img_size_numel=256*256,
+        spatial_dim=2
     )
 
-    inference_scheduler = DDIMScheduler(
+    inference_scheduler = RFlowScheduler(
         num_train_timesteps=1000,
-        # At inference time, even if you’re doing DDIM with fewer steps (e.g. 50), you must pass the same num_train_timesteps to the inference scheduler as you used for training, because it defines the same discrete time grid the model was trained on.
-        beta_start=0.0015,
-        beta_end=0.0205,
-        schedule="scaled_linear_beta",
-        clip_sample=False,
+        use_discrete_timesteps=False,  # impostato a False nel codice di MAISI
+        sample_method='uniform',  # impostato come in MAISI
+        use_timestep_transform=True,
+        base_img_size_numel=256*256,
+        spatial_dim=2
     )
 
-    inferer = DiffusionInferer(scheduler=scheduler)
+    inference_scheduler.set_timesteps(num_inference_steps=30, device=DEVICE, input_img_size_numel=256*256)
+
     scaler = GradScaler()
     writer = SummaryWriter(comment=args.experiment_name)
 
     global_counter = {'train': 0}
 
-    # -----------------------
+    # -------------------------------
     # ✅ Training loop
-    # -----------------------
+    # -------------------------------
     for epoch in range(args.n_epochs):
         diffusion.train()
         epoch_loss = 0
@@ -301,25 +214,22 @@ if __name__ == '__main__':
             img_B = batch["B"].to(DEVICE)  # High-dose CT
 
             noise = torch.randn_like(img_B)
-            timesteps = torch.randint(0, scheduler.num_train_timesteps, (img_B.size(0),), device=DEVICE).long()
+            timesteps = scheduler.sample_timesteps(img_B)
 
             with autocast(enabled=True):
                 optimizer.zero_grad(set_to_none=True)
+                noisy_img_B = scheduler.add_noise(original_samples=img_B, noise=noise, timesteps=timesteps)
+                noisy_image = torch.cat([noisy_img_B, img_A], dim=1)
 
-                # Predict noise + log variance
-                noise_pred, _ = inferer(
-                    inputs=img_B,
-                    concat=img_A,
-                    diffusion_model=diffusion,
-                    noise=noise,
-                    timesteps=timesteps,
-                    condition=img_A,
-                    mode='concat'
-                )
+                predicted_velocity = diffusion(x=noisy_image, timesteps=timesteps)
+                T = scheduler.num_train_timesteps
+                alpha = 1.0 - (timesteps.float() / T)
+                alpha = alpha[:, None, None, None]
+                target_v = (img_B - noisy_img_B) / (alpha + 1e-6)
 
                 # Compute loss
-                loss = F.mse_loss(noise.float(), noise_pred.float())
-            
+                loss = F.mse_loss(predicted_velocity.float(), (target_v).float())
+
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
@@ -330,11 +240,10 @@ if __name__ == '__main__':
             global_counter['train'] += 1
             progress_bar.set_postfix({"loss": epoch_loss / (step + 1)})
 
-            # torch.cuda.empty_cache()
+            torch.cuda.empty_cache()
 
-            """
-            if step % 500 == 0:
-                sample_and_plot_batch_ddim(
+            if step % 150 == 0:
+                run_inference(
                     diffusion_model=diffusion,
                     condition_batch=img_A,
                     gt_batch=img_B,
@@ -342,15 +251,14 @@ if __name__ == '__main__':
                     step=step,
                     device=DEVICE,
                     scheduler=inference_scheduler,
-                    tag="DDIM_Sampling",
+                    tag="Rectified_Flow",
 
                 )
-            """
 
         writer.add_scalar('train/epoch_loss', epoch_loss / len(train_loader), epoch)
 
         if epoch % 50 == 0:
             # Save the model after each epoch.
-            torch.save(diffusion.state_dict(), os.path.join(args.output_dir, f'diffusion-ep-{epoch+args.epoch_start}.pth'))
+            torch.save(diffusion.state_dict(), os.path.join(experiment_dir, f'diffusion-ep-{epoch}.pth'))
 
     print("Training complete.")

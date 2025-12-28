@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #SBATCH -A NAISS2025-5-662 -p alvis
-#SBATCH -N 1 --gpus-per-node=A40:1
-#SBATCH -t 0-10:00:00
+#SBATCH -N 1 --gpus-per-node=A40:4
+#SBATCH -t 7-00:00:00
 # Output files
 #SBATCH --error=./error/job_%J.err
 #SBATCH --output=./output/out_%J.out
@@ -49,12 +49,34 @@ cd /mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion
 # python3 ./test_ddpm_with_double_refiner.py  --num_workers 32 --experiment_name "ddpm_with_double_refiner_T1T2" --output_dir "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/uncertainty_diffusion/checkpoints/ddpm_with_double_refiner_T1T2" --diff_ckpt "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/uncertainty_diffusion/checkpoints/ddpm_with_double_refiner_T1T2/diffusion-ep-550.pth" --refiner1_ckpt "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/uncertainty_diffusion/checkpoints/ddpm_with_double_refiner_T1T2/error_refiner-ep-550.pth" --refiner2_ckpt "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/uncertainty_diffusion/checkpoints/ddpm_with_double_refiner_T1T2/variance_refiner-ep-550.pth"
 
 # python3 ./train_RF.py --num_workers 8 --experiment_name "RF_denoising"
+# python3 ./train_RF_v2.py --num_workers 8 --experiment_name "RF_T1T2_v2"
 # python3 ./train_RF_aleatoric.py --num_workers 8 --experiment_name "RF_denoising_aleatoric"
+# python3 ./train_RF_aleatoric_v2.py --num_workers 8 --experiment_name "RF_T1T2_aleatoric_v2"
 # python3 ./train_RF_aleatoric_two_forward.py --num_workers 8 --experiment_name "RF_denoising_aleatoric_two_forward" --spatial_enc_channels 1
 
-# python3 ./test_RF_aleatoric_two_forward.py  --spatial_enc_channels 1 --num_workers 8 --experiment_name "RF_T1T2_aleatoric_two_forward"  --diff_ckpt "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/RF_T1T2_aleatoric_two_forward/diffusion-ep-300.pth" --context_ckpt "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/RF_T1T2_aleatoric_two_forward/spatial_encoder-ep-300.pth"
-# python3 ./test_RF_aleatoric.py --num_workers 8 --experiment_name "RF_T1T2_aleatoric" --diff_ckpt "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/RF_T1T2_aleatoric/diffusion-ep-300.pth"
-python3 ./test_RF.py --num_workers 8 --experiment_name "RF_denoising" --diff_ckpt "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/RF_denoising/diffusion-ep-300.pth"
+# python3 ./test_RF_aleatoric_two_forward.py  --spatial_enc_channels 1 --num_workers 8 --experiment_name "RF_T1T2_aleatoric_two_forward"  --diff_ckpt "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/RF_T1T2_aleatoric_two_forward/diffusion-ep-900.pth" --context_ckpt "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/RF_T1T2_aleatoric_two_forward/spatial_encoder-ep-900.pth"
+# python3 ./test_RF_aleatoric.py --num_workers 8 --experiment_name "RF_T1T2_aleatoric" --diff_ckpt "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/RF_T1T2_aleatoric/diffusion-ep-900.pth"
+# python3 ./test_RF.py --num_workers 8 --experiment_name "RF_T1T2" --diff_ckpt "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/RF_T1T2/diffusion-ep-900.pth"
 
-# python3 ./train_ddpm_aleatoric_two_forward.py --num_workers 8 --experiment_name "wrapped_unet_two_forward_variance_normalized_T1T2" --spatial_enc_channels 1
+# python3 ./train_ddpm.py --num_workers 8 --batch_size 64 --experiment_name "ddpm_CTPET"  --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/FDG-PEt_CT-lesion/lung_slices" --phase train --slice_range 0 10000 --mri_modalities CT PET
+
+# python3 ./train_ddpm_aleatoric.py --num_workers 8 --experiment_name "ddpm_CTPET_aleatoric"  --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/FDG-PEt_CT-lesion/lung_slices" --phase train --slice_range 0 10000 --mri_modalities CT PET
+# python3 ./train_ddpm_aleatoric_two_forward.py --num_workers 8 --experiment_name "ddpm_CTPET_aleatoric_two_forward"  --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/FDG-PEt_CT-lesion/lung_slices" --phase train --slice_range 0 10000 --mri_modalities CT PET
+
 # python3 ./test_ddpm_aleatoric_two_forward.py  --spatial_enc_channels 1 --num_workers 8 --experiment_name "two_forward_variance_normalized_T1T2"  --diff_ckpt "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/generative_uncertainty/checkpoints/two_forward_variance_normalized_T1T2/diffusion-ep-300.pth" --context_ckpt "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/generative_uncertainty/checkpoints/two_forward_variance_normalized_T1T2/spatial_encoder-ep-300.pth"
+
+
+
+
+# Distributed launch (DDP)
+# torchrun --nproc_per_node=4 train_ddpm_optimized.py \
+#  --num_workers 0 \
+#  --batch_size 16 \
+#  --grad_accum_steps 1 \
+#  --cache_rate 1.0 \
+#  --log_every 50 \
+#  --experiment_name "ddpm_CTPET_A40x4_bs128" \
+#  --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/FDG-PEt_CT-lesion/lung_slices" \
+#  --phase train \
+#  --slice_range 0 10000 \
+#  --mri_modalities CT PET

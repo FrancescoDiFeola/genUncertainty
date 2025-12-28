@@ -20,7 +20,7 @@ from skimage.metrics import peak_signal_noise_ratio as compute_psnr, structural_
 from generative.networks.schedulers import DDIMScheduler
 from src.brlp.T1_T2_dataset import T1T2Dataset
 from src.brlp.CTPET_dataset import CTPETDataset
-
+from src.brlp.Mri2DSlice_dataset import Mri2DSlicedataset
 # -----------------------
 # ✅ Set environment
 # -----------------------
@@ -158,7 +158,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset_csv', required=False, type=str)
-    parser.add_argument('--output_dir', required=True, type=str)
+    parser.add_argument('--output_dir', default="/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/", type=str)
     parser.add_argument('--diff_ckpt', default=None, type=str)
     parser.add_argument('--experiment_name', required=True, type=str)
     parser.add_argument('--annotation_A', required=False, type=str)
@@ -170,17 +170,27 @@ if __name__ == '__main__':
     parser.add_argument('--lr', default=1.5e-5, type=float)
     parser.add_argument('--diff_loss_weight', type=float, default=1.0)
 
+    parser.add_argument('--dataroot', required=True, help='path to images (should have subfolders trainA, trainB, valA, valB, etc)')
+    parser.add_argument('--mri_modalities', default=["t1n", "t1c", "t2w", "t2f"], help='which MRI modality to use', nargs='+', type=str)
+    parser.add_argument('--slice_range', type=int, nargs=2, default=[0, 999],help='Range of slice indices to include, e.g., --slice_range 30 128')
+    parser.add_argument('--phase', type=str, default=None, help='train or test, if None dont split')
+    parser.add_argument('--under_sample_dataset', action="store_true", help='True undersample the dataset deleting one slice every three')
+
     args = parser.parse_args()
 
+
+    experiment_dir = os.path.join(args.output_dir, args.experiment_name)
+    os.makedirs(experiment_dir, exist_ok=True)
     # -----------------------
     # ✅ Load dataset
     # -----------------------
     # Load the LDCT/HDCT dataset
-    
+    """
     dataset = T1T2Dataset(
         annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_A.csv',
         annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_B.csv',
     )
+    """
 
     """
     dataset = LDCTHDCTDataset(
@@ -188,7 +198,8 @@ if __name__ == '__main__':
         annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_FULLDOSE.csv',
     )
     """
-    
+    dataset = Mri2DSlicedataset(args)
+
     # dataset = CTPETDataset(args)
 
     train_loader = DataLoader(dataset=dataset,
