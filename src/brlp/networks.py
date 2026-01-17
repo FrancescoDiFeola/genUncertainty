@@ -102,11 +102,11 @@ def init_patch_discriminator(checkpoints_path: Optional[str] = None) -> nn.Modul
     return load_if(checkpoints_path, patch_discriminator)
 
 
-def init_ddpm_aleatoric(checkpoints_path: Optional[str] = None) -> nn.Module:
+def init_ddpm_aleatoric(input_ch: int, out_ch: int, checkpoints_path: Optional[str] = None) -> nn.Module:
     ddpm = DiffusionModelUNetAleatoricConcat(
         spatial_dims=2,  # 2D data (CT slices); use 3 for volumetric 3D CT
-        in_channels=2,  # Concatenation of [x_t (noisy high-dose), x_ld (low-dose)] → 2 channels
-        out_channels=1,  # Predict noise only; model doubles this to also predict log variance (output = 2 channels)
+        in_channels=input_ch,  # Concatenation of [x_t (noisy high-dose), x_ld (low-dose)] → 2 channels
+        out_channels=out_ch,  # Predict noise only; model doubles this to also predict log variance (output = 2 channels)
         num_res_blocks=(2, 2, 2, 2),  # Number of residual blocks at each U-Net level (encoder/decoder depth)
         num_channels=(64, 128, 128, 256),  # Number of feature channels at each U-Net level (controls width of the network)
         attention_levels=(False, False, True, True),  # Whether to use self-attention at each level (deeper levels benefit more)
@@ -125,11 +125,11 @@ def init_ddpm_aleatoric(checkpoints_path: Optional[str] = None) -> nn.Module:
     )
     return load_if(checkpoints_path, ddpm)
 
-def init_ddpm_aleatoric_two_forward(checkpoints_path: Optional[str] = None) -> nn.Module:
+def init_ddpm_aleatoric_two_forward(input_ch: int, out_ch: int, checkpoints_path: Optional[str] = None) -> nn.Module:
     ddpm = DiffusionModelUNetAleatoricConcat(
     		spatial_dims=2,                      # 2D input
-    		in_channels=2,                       # x_t and x_ld concatenated
-  			out_channels=1,                      # e.g., noise or 2 for noise + logvar
+    		in_channels=input_ch,                       # x_t and x_ld concatenated
+  			out_channels=out_ch,                      # e.g., noise or 2 for noise + logvar
     		num_res_blocks=(2, 2, 2, 2),
    			num_channels=(64, 128, 128, 256),
     		attention_levels=(False, False, True, True),  # Enable attention in deeper levels
@@ -184,11 +184,11 @@ def init_ddpm_uncertainty(
 
     return load_if(checkpoints_path, ddpm)
 
-def init_ddpm(checkpoints_path: Optional[str] = None) -> nn.Module:
+def init_ddpm(input_ch: int, out_ch: int, checkpoints_path: Optional[str] = None) -> nn.Module:
     ddpm = DiffusionModelUNet(
         spatial_dims=2,  # 2D data (CT slices); use 3 for volumetric 3D CT
-        in_channels=2,  # Concatenation of [x_t (noisy high-dose), x_ld (low-dose)] → 2 channels
-        out_channels=1,  # Predict noise only; model doubles this to also predict log variance (output = 2 channels)
+        in_channels=input_ch,  # Concatenation of [x_t (noisy high-dose), x_ld (low-dose)] → 2 channels
+        out_channels=out_ch,  # Predict noise only; model doubles this to also predict log variance (output = 2 channels)
         num_res_blocks=(2, 2, 2, 2),  # Number of residual blocks at each U-Net level (encoder/decoder depth)
         num_channels=(64, 128, 128, 256),  # Number of feature channels at each U-Net level (controls width of the network)
         attention_levels=(False, False, True, True),  # Whether to use self-attention at each level (deeper levels benefit more)
@@ -344,8 +344,8 @@ class SpatialContextEncoder(nn.Module):
         return out.unsqueeze(1)    # Motivation: convert to sequence format for attention (1 token per sample)
 
 
-def init_spatial_context_encoder(channels, checkpoints_path: Optional[str] = None) -> nn.Module:
-    spatial_encoder = SpatialContextEncoder(in_channels=channels, cross_attention_dim=128)
+def init_spatial_context_encoder(channels, cross_attention_dim, checkpoints_path: Optional[str] = None) -> nn.Module:
+    spatial_encoder = SpatialContextEncoder(in_channels=channels, cross_attention_dim=cross_attention_dim)
     return load_if(checkpoints_path, spatial_encoder)
 
 

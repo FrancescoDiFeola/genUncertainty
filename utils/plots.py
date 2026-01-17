@@ -92,3 +92,65 @@ def plot_hist(metric, bins=30):
 # =========================================
 plot_hist("Pearson")
 plot_hist("Spearman")
+
+
+
+####################################
+
+import pandas as pd
+
+def summarize_metrics(csv_path):
+    df = pd.read_csv(csv_path)
+
+    summary = {
+        "n_samples": len(df),
+        "MSE": {
+            "mean": df["MSE"].mean(),
+            "std": df["MSE"].std(),
+            "median": df["MSE"].median(),
+            "min": df["MSE"].min(),
+            "max": df["MSE"].max(),
+        },
+        "PSNR": {
+            "mean": df["PSNR"].mean(),
+            "std": df["PSNR"].std(),
+            "median": df["PSNR"].median(),
+            "min": df["PSNR"].min(),
+            "max": df["PSNR"].max(),
+        },
+        "SSIM": {
+            "mean": df["SSIM"].mean(),
+            "std": df["SSIM"].std(),
+            "median": df["SSIM"].median(),
+            "min": df["SSIM"].min(),
+            "max": df["SSIM"].max(),
+        },
+    }
+
+    return summary
+
+
+def print_summary(summary, epoch=None):
+    title = f"Summary (Epoch {epoch})" if epoch is not None else "Summary"
+    print("=" * len(title))
+    print(title)
+    print("=" * len(title))
+    print(f"Samples: {summary['n_samples']}\n")
+
+    for metric in ["MSE", "PSNR", "SSIM"]:
+        m = summary[metric]
+        print(
+            f"{metric}: "
+            f"mean ± std = {m['mean']:.4f} ± {m['std']:.4f}, "
+            f"median = {m['median']:.4f}, "
+            f"range = [{m['min']:.4f}, {m['max']:.4f}]"
+        )
+
+
+
+root = "/Users/francescodifeola/Desktop/omega/uncertainty/results/RF/T1T2_Brats"
+csv_path = f"{root}/metrics_epoch_100.csv"
+epoch = 100
+
+summary = summarize_metrics(csv_path)
+print_summary(summary, epoch)

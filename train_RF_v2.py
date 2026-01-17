@@ -7,6 +7,7 @@ from torch.cuda.amp import autocast, GradScaler
 from torch.utils.data import DataLoader
 from monai.utils import set_determinism
 from monai.networks.schedulers import RFlowScheduler
+from src.brlp.FlowMatchingScheduler import StochasticFlowScheduler
 from tqdm import tqdm
 from src.brlp.ldct_hdct_dataset import LDCTHDCTDataset
 from src.brlp import networks
@@ -29,90 +30,85 @@ NUM_GPUS = torch.cuda.device_count()
 
 @torch.no_grad()
 def run_inference(
-        diffusion_model,
-        condition_batch,
-        gt_batch,
-        writer,
-        step,
-        device,
-        scheduler,
-        tag="DDIM_Sampling",
-
+    diffusion_model,
+    condition_batch,
+    gt_batch,
+    writer,
+    step,
+    device,
+    scheduler,
+    num_inference_steps=30,
+    tag="FlowMatching_Sampling",
 ):
     """
-    sampling + tensorboard batch display with uncertainty.
-    Plots [LD | GT | Prediction | Uncertainty] per row.
+    Stochastic Flow Matching inference via ODE integration.
+    Plots [Condition | GT | Prediction | Error] per row.
     """
 
     diffusion_model.eval()
     B, C, H, W = condition_batch.shape
 
+    # Initial sample x_1 ~ N(0, I)
     x = torch.randn_like(condition_batch).to(device)
+
     condition_batch = condition_batch.to(device)
     gt_batch = gt_batch.to(device)
 
-    all_next_timesteps = torch.cat((scheduler.timesteps[1:],torch.tensor([0], dtype=scheduler.timesteps.dtype, device=scheduler.timesteps.device)))
-    for t, next_t in tqdm(zip(scheduler.timesteps, all_next_timesteps), total = min(len(scheduler.timesteps), len(all_next_timesteps)),):
-        t_tensor = torch.tensor([t], device=device).long()
-        # Reconstruct input with current latent
+    dt = -1.0 / num_inference_steps
+
+    for i in range(num_inference_steps):
+        # Continuous time t in [1, 0]
+        t = 1.0 - i / num_inference_steps
+        t_tensor = torch.full((B,), t * scheduler.num_train_timesteps, device=device)
+
+        # Model input
         model_input = torch.cat([x, condition_batch], dim=1)
 
         with autocast(enabled=True):
-            predicted_velocity = diffusion_model(x=model_input, timesteps=t_tensor, context=None)
+            predicted_velocity = diffusion_model(
+                x=model_input,
+                timesteps=t_tensor,
+            )
 
-        x, _ = scheduler.step(predicted_velocity, t, x, next_t)
+        # Euler ODE step
+        x = x + predicted_velocity * dt
 
     final_output = x
 
-    # ---- Plotting ---- #
+    # -------------------------
+    # Visualization
+    # -------------------------
     def norm(x):
         x = x.clone()
         x -= x.amin(dim=(1, 2, 3), keepdim=True)
         x /= (x.amax(dim=(1, 2, 3), keepdim=True) + 1e-8)
         return x
 
-    def norm_percentile(x, pmin=1, pmax=99):
-        x = x.clone().to(torch.float32)
-        B = x.shape[0]
-        normed = torch.zeros_like(x)
-        for i in range(B):
-            x_i = x[i]
-            min_val = torch.quantile(x_i, pmin / 100.0)
-            max_val = torch.quantile(x_i, pmax / 100.0)
-            x_i = torch.clamp(x_i, min=min_val, max=max_val)
-            normed[i] = (x_i - min_val) / (max_val - min_val + 1e-8)
-        return normed
+    cond = condition_batch.cpu()
+    gt = gt_batch.cpu()
+    pred = final_output.cpu()
+    error = norm(torch.abs(pred - gt))
 
-    ld = condition_batch.cpu().detach()
-    gt = gt_batch.cpu().detach()
-    pred = final_output.cpu().detach()
-    error = norm_percentile(abs(pred - gt))
-
-    # Create figure
     num_samples = B
     fig, axes = plt.subplots(nrows=num_samples, ncols=4, figsize=(8, 2.5 * num_samples))
     if B == 1:
-        axes = [axes]  # make iterable
+        axes = [axes]
 
-    for i in range(num_samples):
-        images = [ld[i], gt[i], pred[i], error[i]]
-        titles = ["T1", "T2", "Prediction", "Error"]
+    for s in range(num_samples):
+        images = [cond[s], gt[s], pred[s], error[s]]
+        titles = ["Condition", "GT", "Prediction", "Error"]
 
         for j in range(4):
-            ax = axes[i][j] if B > 1 else axes[0][j]
+            ax = axes[s][j] if B > 1 else axes[0][j]
             ax.set_axis_off()
             ax.set_title(titles[j])
-            img = images[j].squeeze(0).cpu().numpy()
-
-            if titles[j] == "Error":
-                ax.imshow(img, cmap='hot')
-            else:
-                ax.imshow(img, cmap='gray')
+            img = images[j].squeeze(0).numpy()
+            cmap = "hot" if titles[j] == "Error" else "gray"
+            ax.imshow(img, cmap=cmap)
 
     plt.tight_layout()
     writer.add_figure(tag, plt.gcf(), global_step=step)
     plt.close()
-
 
 # -----------------------
 # ✅ Training script
@@ -138,6 +134,7 @@ if __name__ == '__main__':
     experiment_dir = os.path.join(args.output_dir, args.experiment_name)
     os.makedirs(experiment_dir, exist_ok=True)
     print(f"Checkpoint directory: {experiment_dir}")
+
     # -----------------------
     # ✅ Load dataset
     # -----------------------
@@ -164,10 +161,10 @@ if __name__ == '__main__':
                               drop_last=True,
                               pin_memory=True)
 
-    # -----------------------
-    # ✅ Load diffusion model
-    # -----------------------
-    diffusion = networks.init_ddpm(args.diff_ckpt).to(DEVICE)
+    # ----------------------- #
+    # ✅ Load diffusion model #
+    # ----------------------- #
+    diffusion = networks.init_ddpm(2, 1, args.diff_ckpt).to(DEVICE)
 
     if NUM_GPUS > 1:
         print(f"Using {NUM_GPUS} GPUs")
@@ -175,25 +172,11 @@ if __name__ == '__main__':
 
     optimizer = torch.optim.AdamW(diffusion.parameters(), lr=args.lr)
 
-    scheduler = RFlowScheduler(
+    scheduler = StochasticFlowScheduler(
         num_train_timesteps=1000,
-        use_discrete_timesteps=False,  # impostato a False nel codice di MAISI
-        sample_method='uniform',  # impostato come in MAISI
-        use_timestep_transform=True,
-        base_img_size_numel=256*256,
-        spatial_dim=2
+        sigma_min=0.0,
+        sigma_max=1.0,
     )
-
-    inference_scheduler = RFlowScheduler(
-        num_train_timesteps=1000,
-        use_discrete_timesteps=False,  # impostato a False nel codice di MAISI
-        sample_method='uniform',  # impostato come in MAISI
-        use_timestep_transform=True,
-        base_img_size_numel=256*256,
-        spatial_dim=2
-    )
-
-    inference_scheduler.set_timesteps(num_inference_steps=30, device=DEVICE, input_img_size_numel=256*256)
 
     scaler = GradScaler()
     writer = SummaryWriter(comment=args.experiment_name)
@@ -210,34 +193,64 @@ if __name__ == '__main__':
         progress_bar.set_description(f"Epoch {epoch}")
 
         for step, batch in progress_bar:
-            img_A = batch["A"].to(DEVICE)  # Low-dose CT
-            img_B = batch["B"].to(DEVICE)  # High-dose CT
+            img_A = batch["A"].to(DEVICE)  # condition
+            img_B = batch["B"].to(DEVICE)  # target
 
-            noise = torch.randn_like(img_B)
-            timesteps = scheduler.sample_timesteps(img_B)
+            batch_size = img_B.shape[0]
+
+            # source distribution
+            x0 = torch.randn_like(img_B)
+
+            # stochastic perturbation
+            eps = torch.randn_like(img_B)
+
+            # sample continuous time t ∈ (0,1)
+            t = scheduler.sample_timesteps(
+                batch_size=batch_size,
+                device=img_B.device,
+            )
 
             with autocast(enabled=True):
                 optimizer.zero_grad(set_to_none=True)
-                noisy_img_B = scheduler.add_noise(original_samples=img_B, noise=noise, timesteps=timesteps)
-                noisy_image = torch.cat([noisy_img_B, img_A], dim=1)
 
-                predicted_velocity = diffusion(x=noisy_image, timesteps=timesteps)
-                T = scheduler.num_train_timesteps
-                alpha = 1.0 - (timesteps.float() / T)
-                alpha = alpha[:, None, None, None]
-                target_v = (img_B - noisy_img_B) / (alpha + 1e-6)
+                # stochastic interpolation
+                x_t = scheduler.interpolate(
+                    x0=x0,
+                    x1=img_B,
+                    t=t,
+                    noise=eps,
+                )
 
-                # Compute loss
-                loss = F.mse_loss(predicted_velocity.float(), (target_v).float())
+                # conditional model input
+                model_input = torch.cat([x_t, img_A], dim=1)
+
+                # predict velocity
+                predicted_velocity = diffusion(
+                    x=model_input,
+                    timesteps=t,  # continuous time
+                )
+
+                # correct stochastic flow target
+                target_v = scheduler.target_velocity(
+                    x0=x0,
+                    x1=img_B,
+                    noise=eps,
+                    t=t,
+                )
+
+                loss = F.mse_loss(
+                    predicted_velocity.float(),
+                    target_v.float(),
+                )
 
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
 
-            # Logging
-            writer.add_scalar('train/loss', loss.item(), global_counter['train'])
+            writer.add_scalar("train/loss", loss.item(), global_counter["train"])
             epoch_loss += loss.item()
-            global_counter['train'] += 1
+            global_counter["train"] += 1
+
             progress_bar.set_postfix({"loss": epoch_loss / (step + 1)})
 
             torch.cuda.empty_cache()
@@ -250,9 +263,9 @@ if __name__ == '__main__':
                     writer=writer,
                     step=step,
                     device=DEVICE,
-                    scheduler=inference_scheduler,
+                    scheduler=scheduler,  # same scheduler is fine
+                    num_inference_steps=30,  # ODE steps
                     tag="Rectified_Flow",
-
                 )
 
         writer.add_scalar('train/epoch_loss', epoch_loss / len(train_loader), epoch)

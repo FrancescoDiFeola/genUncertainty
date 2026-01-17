@@ -310,14 +310,16 @@ def sample_and_plot_batch_ddim(
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset_csv', type=str, required=False)
-    parser.add_argument('--output_dir', type=str, required=True)
+    parser.add_argument('--output_dir', type=str,default="/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/", required=False)
     parser.add_argument('--diff_ckpt', type=str, required=True)
     parser.add_argument('--experiment_name', type=str, required=True)
     parser.add_argument('--batch_size', default=1, type=int)
     parser.add_argument('--num_workers', default=4, type=int)
     args = parser.parse_args()
 
-    os.makedirs(args.output_dir, exist_ok=True)
+    experiment_dir = os.path.join(args.output_dir, args.experiment_name)
+    os.makedirs(experiment_dir, exist_ok=True)
+    print(f"Checkpoint directory: {experiment_dir}")
 
     dataset = T1T2Dataset(
         annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_A_test.csv',
@@ -332,7 +334,7 @@ if __name__ == '__main__':
     """
 
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
-    diffusion = networks.init_ddpm_aleatoric(args.diff_ckpt).to(DEVICE)
+    diffusion = networks.init_ddpm_aleatoric(2, 1, args.diff_ckpt).to(DEVICE)
     print(diffusion)
     if NUM_GPUS > 1:
         diffusion = torch.nn.DataParallel(diffusion)
@@ -346,7 +348,7 @@ if __name__ == '__main__':
     )
 
     writer = SummaryWriter(comment=args.experiment_name)
-    csv_path = os.path.join(args.output_dir, f"{args.experiment_name}_metrics_epoch_300.csv")
+    csv_path = os.path.join(args.output_dir, f"{args.experiment_name}_metrics_epoch_200.csv")
 
     with open(csv_path, mode='w', newline='') as csvfile:
         fieldnames = ['Sample', 'MSE', 'PSNR', 'SSIM']

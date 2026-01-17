@@ -461,25 +461,22 @@ if __name__ == '__main__':
     os.makedirs(experiment_dir, exist_ok=True)
     print(f"Checkpoint directory: {experiment_dir}")
 
-
+    """
     dataset = T1T2Dataset(
         annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_A_test.csv',
         annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_B_test.csv',
     )
-
-
     """
+
     dataset = LDCTHDCTDataset(
         annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D2/annotations_test_lowdose_GAN_D2_nuovo_ordinato.csv',
         annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D2/annotations_test_fulldose_GAN_D2_nuovo_ordinato.csv',
     )
-    """
-
 
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
     # diffusion = networks.init_ddpm_uncertainty(args.diff_ckpt, use_cross_attention=True).to(DEVICE)
-    diffusion = networks.init_ddpm_aleatoric_two_forward(args.diff_ckpt).to(DEVICE)
-    spatial_encoder = networks.init_spatial_context_encoder(args.spatial_enc_channels, args.context_ckpt).to(DEVICE)
+    diffusion = networks.init_ddpm_aleatoric_two_forward(2, 1, args.diff_ckpt).to(DEVICE)
+    spatial_encoder = networks.init_spatial_context_encoder(channels=args.spatial_enc_channels, cross_attention_dim=128, checkpoints_path=args.context_ckpt).to(DEVICE)
 
     if NUM_GPUS > 1:
         diffusion = torch.nn.DataParallel(diffusion)
@@ -497,7 +494,7 @@ if __name__ == '__main__':
     scheduler.set_timesteps(num_inference_steps=30, device=DEVICE, input_img_size_numel=256*256)
 
     writer = SummaryWriter(comment=args.experiment_name)
-    csv_path = os.path.join(experiment_dir, f"{args.experiment_name}_metrics_iterative_refinement_without_twoforward_epoch_900.csv")
+    csv_path = os.path.join(experiment_dir, f"{args.experiment_name}_metrics_iterative_refinement_without_twoforward_epoch_300.csv")
 
     with open(csv_path, mode='w', newline='') as csvfile:
         fieldnames = ['Sample', 'MSE', 'PSNR', 'SSIM', 'Pearson', 'Spearman']

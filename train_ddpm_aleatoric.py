@@ -6,6 +6,7 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.cuda.amp import autocast, GradScaler
 from torch.utils.data import DataLoader
 from monai.utils import set_determinism
+from torchvision import transforms
 from generative.networks.schedulers import DDPMScheduler
 from tqdm import tqdm
 import torchvision.utils as vutils
@@ -21,6 +22,8 @@ from generative.networks.schedulers import DDIMScheduler
 from src.brlp.T1_T2_dataset import T1T2Dataset
 from src.brlp.CTPET_dataset import CTPETDataset
 from src.brlp.Mri2DSlice_dataset import Mri2DSlicedataset
+from src.brlp.CS_dataset import CityscapesColorDataset
+from src.brlp.ND_dataset import PairedImageDataset
 # -----------------------
 # ✅ Set environment
 # -----------------------
@@ -130,7 +133,7 @@ def sample_and_plot_batch_ddim_aleatoric(
     fig, axes = plt.subplots(nrows=num_samples, ncols=5, figsize=(8, 2.5 * num_samples))
     if B == 1:
         axes = [axes]  # make iterable
-
+    """
     for i in range(num_samples):
         images = [ld[i], gt[i], pred[i], unc[i], error[i]]
         titles = ["T1", "T2", "Prediction", "Uncertainty", "Error"]
@@ -145,6 +148,37 @@ def sample_and_plot_batch_ddim_aleatoric(
                 ax.imshow(img, cmap='hot')
             else:
                 ax.imshow(img, cmap='gray')
+    """
+
+    for i in range(num_samples):
+        images = [ld[i], gt[i], pred[i], unc[i], error[i]]
+        titles = ["T1", "T2", "Prediction", "uncertainty", "Error"]
+
+        for j in range(5):
+            ax = axes[i][j] if B > 1 else axes[0][j]
+            ax.set_axis_off()
+            ax.set_title(titles[j])
+
+            img = images[j].cpu().numpy()  # shape: (C, H, W) or (1, H, W)
+            if img.ndim == 3:
+                # (C, H, W) -> (H, W) or (H, W, 3)
+                if img.shape[0] == 1:
+                    img = img[0]  # (H, W) grayscale
+                elif img.shape[0] == 3:
+                    img = np.transpose(img, (1, 2, 0))  # (H, W, 3) RGB
+
+            if titles[j] == "Uncertainty" or titles[j] == "Error":
+                # always show error as grayscale
+                if img.ndim == 3 and img.shape[2] == 3:
+                    err_gray = np.mean(img, axis=2)
+                    ax.imshow(err_gray, cmap="hot")
+                else:
+                    ax.imshow(img, cmap="hot")
+            else:
+                if img.ndim == 2:
+                    ax.imshow(img, cmap="gray")
+                else:
+                    ax.imshow(img)  # RGB
 
     plt.tight_layout()
     writer.add_figure(tag, plt.gcf(), global_step=step)
@@ -161,6 +195,7 @@ if __name__ == '__main__':
     parser.add_argument('--output_dir', default="/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/", type=str)
     parser.add_argument('--diff_ckpt', default=None, type=str)
     parser.add_argument('--experiment_name', required=True, type=str)
+    parser.add_argument('--task', required=True, type=str)
     parser.add_argument('--annotation_A', required=False, type=str)
     parser.add_argument('--annotation_B', required=False, type=str)
     parser.add_argument('--num_workers', default=8, type=int)
@@ -169,8 +204,10 @@ if __name__ == '__main__':
     parser.add_argument('--epoch_start', default=0, type=int)
     parser.add_argument('--lr', default=1.5e-5, type=float)
     parser.add_argument('--diff_loss_weight', type=float, default=1.0)
+    parser.add_argument('--in_ch', default=2, type=int)
+    parser.add_argument('--out_ch', default=1, type=int)
 
-    parser.add_argument('--dataroot', required=True, help='path to images (should have subfolders trainA, trainB, valA, valB, etc)')
+    parser.add_argument('--dataroot', required=False, help='path to images (should have subfolders trainA, trainB, valA, valB, etc)')
     parser.add_argument('--mri_modalities', default=["t1n", "t1c", "t2w", "t2f"], help='which MRI modality to use', nargs='+', type=str)
     parser.add_argument('--slice_range', type=int, nargs=2, default=[0, 999],help='Range of slice indices to include, e.g., --slice_range 30 128')
     parser.add_argument('--phase', type=str, default=None, help='train or test, if None dont split')
@@ -184,23 +221,49 @@ if __name__ == '__main__':
     # -----------------------
     # ✅ Load dataset
     # -----------------------
+
     # Load the LDCT/HDCT dataset
-    """
-    dataset = T1T2Dataset(
-        annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_A.csv',
-        annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_B.csv',
-    )
-    """
+    if args.task == "T1T2":
+        dataset = T1T2Dataset(
+            annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_A.csv',
+            annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_B.csv',
 
-    """
-    dataset = LDCTHDCTDataset(
-        annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_LOWDOSE.csv',
-        annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_FULLDOSE.csv',
-    )
-    """
-    dataset = Mri2DSlicedataset(args)
+        )
 
-    # dataset = CTPETDataset(args)
+    elif args.task == "CS":
+        transform = transforms.Compose([
+            transforms.Resize((256, 512)),
+            transforms.ToTensor()
+        ])
+
+        dataset = CityscapesColorDataset(
+            root=args.dataroot,
+            split="train",
+            transform=transform,
+            target_transform=transform
+        )
+
+    elif args.task == "ND":
+        transform = transforms.Compose([
+            transforms.Resize((272, 480)),
+            transforms.ToTensor()
+        ])
+
+        dataset = PairedImageDataset(
+            csv_path="train.csv",
+            root_dir="/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/ND_dataset",
+            transform_A=transform,
+            transform_B=transform
+        )
+
+    elif args.task == "CTPET":
+        dataset = Mri2DSlicedataset(args)
+
+    elif args.task == "denoising":
+        dataset = LDCTHDCTDataset(
+            annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_LOWDOSE.csv',
+            annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_FULLDOSE.csv',
+        )
 
     train_loader = DataLoader(dataset=dataset,
                               batch_size=args.batch_size,
@@ -212,7 +275,7 @@ if __name__ == '__main__':
     # -----------------------
     # ✅ Load diffusion model
     # -----------------------
-    diffusion = networks.init_ddpm_aleatoric(args.diff_ckpt).to(DEVICE)
+    diffusion = networks.init_ddpm_aleatoric(args.in_ch, args.out_ch, args.diff_ckpt).to(DEVICE)
     print(diffusion)
     if NUM_GPUS > 1:
         print(f"Using {NUM_GPUS} GPUs")
@@ -288,7 +351,7 @@ if __name__ == '__main__':
             progress_bar.set_postfix({"loss": epoch_loss / (step + 1)})
 
             torch.cuda.empty_cache()
-            if step % 150 == 0:
+            if step % 500 == 0:
                 sample_and_plot_batch_ddim_aleatoric(
                     diffusion_model=diffusion,
                     condition_batch=img_A,
@@ -306,6 +369,6 @@ if __name__ == '__main__':
         if epoch % 50 == 0:
             # Save the model after each epoch.
             current_epoch = epoch + args.epoch_start
-            torch.save(diffusion.state_dict(), os.path.join(args.output_dir, f'diffusion-ep-{current_epoch}.pth'))
+            torch.save(diffusion.state_dict(), os.path.join(experiment_dir, f'diffusion-ep-{current_epoch}.pth'))
 
     print("Training complete.")

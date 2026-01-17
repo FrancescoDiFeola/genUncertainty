@@ -1,6 +1,7 @@
 import os
 import argparse
 import torch
+import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 from torch.cuda.amp import autocast, GradScaler
 from torch.utils.data import DataLoader
@@ -10,7 +11,11 @@ from tqdm import tqdm
 from src.brlp.ldct_hdct_dataset import LDCTHDCTDataset
 from src.brlp import networks
 import matplotlib.pyplot as plt
+from torchvision import transforms
 from src.brlp.T1_T2_dataset import T1T2Dataset
+from src.brlp.Mri2DSlice_dataset import Mri2DSlicedataset
+from src.brlp.CS_dataset import CityscapesColorDataset
+from src.brlp.ND_dataset import PairedImageDataset
 
 # -----------------------
 # ✅ Set environment
@@ -121,12 +126,27 @@ def run_inference(
             ax = axes[i][j] if B > 1 else axes[0][j]
             ax.set_axis_off()
             ax.set_title(titles[j])
-            img = images[j].squeeze(0).cpu().numpy()
+
+            img = images[j].cpu().numpy()  # shape: (C, H, W) or (1, H, W)
+            if img.ndim == 3:
+                # (C, H, W) -> (H, W) or (H, W, 3)
+                if img.shape[0] == 1:
+                    img = img[0]  # (H, W) grayscale
+                elif img.shape[0] == 3:
+                    img = np.transpose(img, (1, 2, 0))  # (H, W, 3) RGB
 
             if titles[j] == "Uncertainty" or titles[j] == "Error":
-                ax.imshow(img, cmap='hot')
+                # always show error as grayscale
+                if img.ndim == 3 and img.shape[2] == 3:
+                    err_gray = np.mean(img, axis=2)
+                    ax.imshow(err_gray, cmap="hot")
+                else:
+                    ax.imshow(img, cmap="hot")
             else:
-                ax.imshow(img, cmap='gray')
+                if img.ndim == 2:
+                    ax.imshow(img, cmap="gray")
+                else:
+                    ax.imshow(img)  # RGB
 
     plt.tight_layout()
     writer.add_figure(tag, plt.gcf(), global_step=step)
@@ -143,6 +163,7 @@ if __name__ == '__main__':
     parser.add_argument('--output_dir', default="/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/", type=str)
     parser.add_argument('--diff_ckpt', default=None, type=str)
     parser.add_argument('--experiment_name', required=True, type=str)
+    parser.add_argument('--task', required=True, type=str)
     parser.add_argument('--annotation_A', required=False, type=str)
     parser.add_argument('--annotation_B', required=False, type=str)
     parser.add_argument('--num_workers', default=8, type=int)
@@ -151,6 +172,8 @@ if __name__ == '__main__':
     parser.add_argument('--epoch_start', default=0, type=int)
     parser.add_argument('--lr', default=1.5e-5, type=float)
     parser.add_argument('--diff_loss_weight', type=float, default=1.0)
+    parser.add_argument('--in_ch', default=2, type=int)
+    parser.add_argument('--out_ch', default=1, type=int)
 
     args = parser.parse_args()
 
@@ -160,20 +183,49 @@ if __name__ == '__main__':
     # -----------------------
     # ✅ Load dataset
     # -----------------------
+
     # Load the LDCT/HDCT dataset
-    """
-    dataset = T1T2Dataset(
-        annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_A.csv',
-        annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_B.csv',
-    )
-    """
+    if args.task == "T1T2":
+        dataset = T1T2Dataset(
+            annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_A.csv',
+            annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_B.csv',
 
-    dataset = LDCTHDCTDataset(
-        annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_LOWDOSE.csv',
-        annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_FULLDOSE.csv',
-    )
+        )
 
+    elif args.task == "CS":
+        transform = transforms.Compose([
+            transforms.Resize((256, 512)),
+            transforms.ToTensor()
+        ])
 
+        dataset = CityscapesColorDataset(
+            root=args.dataroot,
+            split="train",
+            transform=transform,
+            target_transform=transform
+        )
+
+    elif args.task == "ND":
+        transform = transforms.Compose([
+            transforms.Resize((272, 480)),
+            transforms.ToTensor()
+        ])
+
+        dataset = PairedImageDataset(
+            csv_path="train.csv",
+            root_dir="/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/ND_dataset",
+            transform_A=transform,
+            transform_B=transform
+        )
+
+    elif args.task == "CTPET":
+        dataset = Mri2DSlicedataset(args)
+
+    elif args.task == "denoising":
+        dataset = LDCTHDCTDataset(
+            annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_LOWDOSE.csv',
+            annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_FULLDOSE.csv',
+        )
 
     train_loader = DataLoader(dataset=dataset,
                               batch_size=args.batch_size,
@@ -185,7 +237,7 @@ if __name__ == '__main__':
     # -----------------------
     # ✅ Load diffusion model
     # -----------------------
-    diffusion = networks.init_ddpm_aleatoric(args.diff_ckpt).to(DEVICE)
+    diffusion = networks.init_ddpm_aleatoric(args.in_ch, args.out_ch, args.diff_ckpt).to(DEVICE)
     print(diffusion)
 
     if NUM_GPUS > 1:

@@ -65,4 +65,4 @@ class CityscapesColorDataset(Dataset):
         if self.target_transform is not None:
             target = self.target_transform(target)
 
-        return image, target
+        return {"A": image, "B": target}
