@@ -31,9 +31,9 @@ class VAE_Losses:
 
     def __init__(self, device, perceptual_weight=0.3, kl_weight=1e-6, adv_weight=0.1):
 
-        #self.recon_loss = nn.L1Loss()  # Reconstruction loss (L1)
+        self.recon_loss = nn.L1Loss()  # Reconstruction loss (L1)
         self.adv_loss = PatchAdversarialLoss(criterion="least_squares")
-        self.perceptual_loss = PerceptualLoss(spatial_dims=3, network_type="squeeze", is_fake_3d=True, fake_3d_ratio=0.2, pretrained="DEFAULT").to(device)
+        self.perceptual_loss = PerceptualLoss(spatial_dims=2, network_type="alex").to(device)  # PerceptualLoss(spatial_dims=3, network_type="squeeze", is_fake_3d=True, fake_3d_ratio=0.2, pretrained="DEFAULT").to(device)
 
 
         self.perceptual_weight = perceptual_weight
@@ -42,11 +42,11 @@ class VAE_Losses:
 
 
 
-    def compute_losses(self, reconstruction, image, mu, log_var, discriminator, mask):
+    def compute_losses(self, reconstruction, image, mu, log_var, discriminator):
 
 
         losses = {
-            "recon": self.recon_loss_weighted(reconstruction, image, mask),  # Latent consistency loss
+            "recon": self.recon_loss(reconstruction, image),  # Latent consistency loss
             "kl": self.kl_loss(mu, log_var),   # KL loss
             "perceptual": self.perceptual_loss(reconstruction, image),  # Perceptual loss
         }

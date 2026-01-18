@@ -15,7 +15,7 @@ from skimage.metrics import peak_signal_noise_ratio as psnr
 from configs.test_options import TestOptions
 from models.autoencoder import Autoencoder
 from data.dataset_BASE import CreateDataloader
-from utils.checkpoints_utils import load_checkpoint
+from src.VAE.utils.checkpoints_utils import load_checkpoint
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

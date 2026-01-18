@@ -1,72 +1,51 @@
 import os
 import argparse
 import torch
+import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 from torch.cuda.amp import autocast, GradScaler
-from torch.utils.data import DataLoader
+# from torch.utils.data import DataLoader
+from monai.data import DataLoader
+from torchvision import transforms
 from monai.utils import set_determinism
 from generative.networks.schedulers import DDPMScheduler
 from tqdm import tqdm
-from src import LDCTHDCTAutoKLDataset
-from src import LDCTHDCTDataset
-from src import networks
+# from src.brlp.ldct_hdct_dataset import LDCTHDCTAutoKLDataset
+from src.brlp.ldct_hdct_dataset import LDCTHDCTDataset
+from src.brlp import networks
 from inferers import DiffusionInferer
+import numpy as np
 import matplotlib.pyplot as plt
 from generative.networks.schedulers import DDIMScheduler
-from src import T1T2Dataset
-from src import CTPETDataset
+from src.brlp.T1_T2_dataset import T1T2Dataset
+from src.brlp.CS_dataset import CityscapesColorDataset
+from src.brlp.Mri2DSlice_dataset import Mri2DSlicedataset
+from src.brlp.ND_dataset import PairedImageDataset
+from src.brlp.UViT import UViTBase
 
-# ----------------------------------------------
+# -----------------------
 # ✅ Set environment
-# ----------------------------------------------
+# -----------------------
 set_determinism(0)
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 NUM_GPUS = torch.cuda.device_count()
 
-# ----------------------------------------------
-# ✅ Loss: Aleatoric (heteroscedastic)
-# ----------------------------------------------
-def heteroscedastic_loss(pred_mean, pred_logvar, target_noise, min_logvar=-7.0, reg_weight=1e-3):
-    # Clamp log variance to prevent overconfidence
-    pred_logvar = torch.clamp(pred_logvar, min=min_logvar)
 
-    # Compute precision = 1 / variance
-    precision = torch.exp(-pred_logvar)
-
-    # Compute heteroscedastic loss
-    base_loss = 0.5 * precision * (target_noise - pred_mean) ** 2 + 0.5 * pred_logvar
-
-    # Optional regularization: penalize too-small variance (i.e., too-large precision)
-    reg = precision.mean()  # higher when variance is low
-    return base_loss.mean() + reg_weight * reg
-
-# ----------------------------------------------
+# -----------------------
 # ✅ Log to tensorboard
-# ----------------------------------------------
+# -----------------------
 
-def norm_percentile(x, pmin=1, pmax=99):
-    x = x.clone().to(torch.float32)
-    B = x.shape[0]
-    normed = torch.zeros_like(x)
-    for i in range(B):
-        x_i = x[i]
-        min_val = torch.quantile(x_i, pmin / 100.0)
-        max_val = torch.quantile(x_i, pmax / 100.0)
-        x_i = torch.clamp(x_i, min=min_val, max=max_val)
-        normed[i] = (x_i - min_val) / (max_val - min_val + 1e-8)
-    return normed
 
 @torch.no_grad()
-def sample_and_plot_batch_ddim_aleatoric(
+def sample_and_plot_batch_ddim(
         diffusion_model,
-        refiner,
         condition_batch,
         gt_batch,
         writer,
         step,
         device,
+        scheduler,
         tag="DDIM_Sampling",
-        scheduler=DDIMScheduler,
         num_training_steps=1000,
         num_inference_steps=50,
         beta_start=0.0015,
@@ -78,33 +57,31 @@ def sample_and_plot_batch_ddim_aleatoric(
     """
 
     diffusion_model.eval()
-    refiner.eval()
-    B, C, H, W = condition_batch.shape
+    B, _, _, _ = condition_batch.shape
 
     scheduler.set_timesteps(num_inference_steps)
     scheduler.alphas_cumprod = scheduler.alphas_cumprod.to(device)
     x = torch.randn_like(condition_batch).to(device)
     condition_batch = condition_batch.to(device)
     gt_batch = gt_batch.to(device)
-    uncertainty = None
 
     progress = tqdm(scheduler.timesteps, desc="DDIM Sampling")
 
     for t in progress:
         t_tensor = torch.tensor([t], device=device).long()
 
+        # timestep tensor must match batch size: [B]
+        # t_tensor = torch.full((B,), t, device=device, dtype=torch.long)
+
         # Reconstruct input with current latent
         model_input = torch.cat([x, condition_batch], dim=1)
 
         with autocast(enabled=True):
-            pred_noise, pred_logvar = diffusion_model(x=model_input, timesteps=t_tensor, context=None)
-            pred_noise, pred_log_var = refiner(pred_noise, pred_logvar)
+            pred_noise = diffusion_model(x=model_input, timesteps=t_tensor, context=None)
 
         x, _ = scheduler.step(pred_noise, t_tensor, x)
-        uncertainty = pred_logvar
 
     pred_denoised = x
-    uncertainty_map = torch.exp(uncertainty)
 
     # ---- Plotting ---- #
     def norm(x):
@@ -128,73 +105,144 @@ def sample_and_plot_batch_ddim_aleatoric(
     ld = condition_batch.cpu().detach()
     gt = gt_batch.cpu().detach()
     pred = pred_denoised.cpu().detach()
-    unc = norm_percentile(uncertainty_map).cpu().detach()
-    error = norm_percentile(abs(pred-gt))
+    error = norm_percentile(abs(pred - gt))
 
     # Create figure
     num_samples = B
-    fig, axes = plt.subplots(nrows=num_samples, ncols=5, figsize=(8, 2.5 * num_samples))
+    fig, axes = plt.subplots(nrows=num_samples, ncols=4, figsize=(8, 2.5 * num_samples))
     if B == 1:
         axes = [axes]  # make iterable
-
+    """
     for i in range(num_samples):
-        images = [ld[i], gt[i], pred[i], unc[i], error[i]]
-        titles = ["T1", "T2", "Prediction", "Uncertainty", "Error"]
+        images = [ld[i], gt[i], pred[i], error[i]]
+        titles = ["T1", "T2", "Prediction", "Error"]
 
-        for j in range(5):
+        for j in range(4):
             ax = axes[i][j] if B > 1 else axes[0][j]
             ax.set_axis_off()
             ax.set_title(titles[j])
             img = images[j].squeeze(0).cpu().numpy()
 
-            if titles[j] == "Uncertainty" or titles[j] == "Error":
+            if titles[j] == "Error":
                 ax.imshow(img, cmap='hot')
             else:
                 ax.imshow(img, cmap='gray')
+    """
+
+    for i in range(num_samples):
+        images = [ld[i], gt[i], pred[i], error[i]]
+        titles = ["T1", "T2", "Prediction", "Error"]
+
+        for j in range(4):
+            ax = axes[i][j] if B > 1 else axes[0][j]
+            ax.set_axis_off()
+            ax.set_title(titles[j])
+
+            img = images[j].cpu().numpy()  # shape: (C, H, W) or (1, H, W)
+            if img.ndim == 3:
+                # (C, H, W) -> (H, W) or (H, W, 3)
+                if img.shape[0] == 1:
+                    img = img[0]  # (H, W) grayscale
+                elif img.shape[0] == 3:
+                    img = np.transpose(img, (1, 2, 0))  # (H, W, 3) RGB
+
+            if titles[j] == "Error":
+                # always show error as grayscale
+                if img.ndim == 3 and img.shape[2] == 3:
+                    err_gray = np.mean(img, axis=2)
+                    ax.imshow(err_gray, cmap="hot")
+                else:
+                    ax.imshow(img, cmap="hot")
+            else:
+                if img.ndim == 2:
+                    ax.imshow(img, cmap="gray")
+                else:
+                    ax.imshow(img)  # RGB
 
     plt.tight_layout()
     writer.add_figure(tag, plt.gcf(), global_step=step)
     plt.close()
 
 
-# ----------------------------------------------
+# -----------------------
 # ✅ Training script
-# ----------------------------------------------
+# -----------------------
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset_csv', required=False, type=str)
-    parser.add_argument('--output_dir', required=True, type=str)
+    parser.add_argument('--output_dir', default="/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/", type=str)
     parser.add_argument('--diff_ckpt', default=None, type=str)
     parser.add_argument('--experiment_name', required=True, type=str)
+    parser.add_argument('--task', required=True, type=str)
     parser.add_argument('--annotation_A', required=False, type=str)
     parser.add_argument('--annotation_B', required=False, type=str)
     parser.add_argument('--num_workers', default=8, type=int)
     parser.add_argument('--n_epochs', default=5000, type=int)
     parser.add_argument('--batch_size', default=16, type=int)
     parser.add_argument('--lr', default=1.5e-5, type=float)
+    parser.add_argument('--epoch_start', default=0, type=float)
     parser.add_argument('--diff_loss_weight', type=float, default=1.0)
+    parser.add_argument('--in_ch', default=2, type=int)
+    parser.add_argument('--out_ch', default=1, type=int)
+
+    parser.add_argument('--dataroot', required=False, help='path to images (should have subfolders trainA, trainB, valA, valB, etc)')
+    parser.add_argument('--mri_modalities', default=["t1n", "t1c", "t2w", "t2f"], help='which MRI modality to use', nargs='+', type=str)
+    parser.add_argument('--slice_range', type=int, nargs=2, default=[0, 999], help='Range of slice indices to include, e.g., --slice_range 30 128')
+    parser.add_argument('--phase', type=str, default=None, help='train or test, if None dont split')
+    parser.add_argument('--under_sample_dataset', action="store_true", help='True undersample the dataset deleting one slice every three')
 
     args = parser.parse_args()
 
-    # ----------------------------------------------
-    # ✅ Load dataset
-    # ----------------------------------------------
-    # Load the LDCT/HDCT dataset
-    dataset = T1T2Dataset(
-        annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_A.csv',
-        annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_B.csv',
-    )
-    
-    
-    """
-    dataset = LDCTHDCTDataset(
-        annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_LOWDOSE.csv',
-        annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_FULLDOSE.csv',
-    )
-    """
+    experiment_dir = os.path.join(args.output_dir, args.experiment_name)
+    os.makedirs(experiment_dir, exist_ok=True)
 
-    # dataset = CTPETDataset(args)
+    # -----------------------
+    # ✅ Load dataset
+    # -----------------------
+
+    # Load the LDCT/HDCT dataset
+    if args.task == "T1T2":
+        dataset = T1T2Dataset(
+            annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_A.csv',
+            annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_B.csv',
+
+        )
+
+    elif args.task == "CS":
+        transform = transforms.Compose([
+            transforms.Resize((256, 512)),
+            transforms.ToTensor()
+        ])
+
+        dataset = CityscapesColorDataset(
+            root=args.dataroot,
+            split="train",
+            transform=transform,
+            target_transform=transform
+        )
+
+    elif args.task == "ND":
+        transform = transforms.Compose([
+            transforms.Resize((272, 480)),
+            transforms.ToTensor()
+        ])
+
+        dataset = PairedImageDataset(
+            csv_path="train.csv",
+            root_dir="/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/ND_dataset",
+            transform_A=transform,
+            transform_B=transform
+        )
+
+    elif args.task == "CTPET":
+        dataset = Mri2DSlicedataset(args)
+
+    elif args.task == "denoising":
+        dataset = LDCTHDCTDataset(
+            annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_LOWDOSE.csv',
+            annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_FULLDOSE.csv',
+        )
 
     train_loader = DataLoader(dataset=dataset,
                               batch_size=args.batch_size,
@@ -203,19 +251,16 @@ if __name__ == '__main__':
                               drop_last=True,
                               pin_memory=True)
 
-    # ----------------------------------------------
+    # -----------------------
     # ✅ Load diffusion model
-    # ----------------------------------------------
-    diffusion = networks.init_ddpm_aleatoric(args.diff_ckpt).to(DEVICE)
-    print(diffusion)
-    joint_refiner = networks.JointFiLMRefiner().to(DEVICE)
+    # -----------------------
+    diffusion = networks.init_uvit_base(img_size=256, in_ch=args.in_ch, out_ch=args.out_ch, checkpoints_path=args.diff_ckpt).to(DEVICE)
 
     if NUM_GPUS > 1:
         print(f"Using {NUM_GPUS} GPUs")
         diffusion = torch.nn.DataParallel(diffusion)
-        attention_refiner = torch.nn.DataParallel(joint_refiner)
 
-    optimizer = torch.optim.AdamW(list(diffusion.parameters()) + list(joint_refiner.parameters()), lr=args.lr)
+    optimizer = torch.optim.AdamW(diffusion.parameters(), lr=args.lr)
 
     scheduler = DDPMScheduler(
         num_train_timesteps=1000,
@@ -244,7 +289,6 @@ if __name__ == '__main__':
     # -----------------------
     for epoch in range(args.n_epochs):
         diffusion.train()
-        joint_refiner.train()
         epoch_loss = 0
         progress_bar = tqdm(enumerate(train_loader), total=len(train_loader))
         progress_bar.set_description(f"Epoch {epoch}")
@@ -258,8 +302,9 @@ if __name__ == '__main__':
 
             with autocast(enabled=True):
                 optimizer.zero_grad(set_to_none=True)
+
                 # Predict noise + log variance
-                pred_mean_var, noisy_image = inferer(
+                noise_pred, _ = inferer(
                     inputs=img_B,
                     concat=img_A,
                     diffusion_model=diffusion,
@@ -268,14 +313,9 @@ if __name__ == '__main__':
                     condition=img_A,
                     mode='concat'
                 )
-				
-                pred_mean, log_var = joint_refiner(pred_mean_var[0], pred_mean_var[1])
 
                 # Compute loss
-                loss = args.diff_loss_weight * heteroscedastic_loss(pred_mean, log_var, noise)
-                
-                
-                
+                loss = F.mse_loss(noise.float(), noise_pred.float())
 
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -283,24 +323,22 @@ if __name__ == '__main__':
 
             # Logging
             writer.add_scalar('train/loss', loss.item(), global_counter['train'])
-            writer.add_scalar("train/logvar_mean", pred_mean_var[1].mean().item(), global_counter['train'])
-            writer.add_scalar("train/logvar_std", pred_mean_var[1].std().item(), global_counter['train'])
             epoch_loss += loss.item()
             global_counter['train'] += 1
             progress_bar.set_postfix({"loss": epoch_loss / (step + 1)})
 
-            torch.cuda.empty_cache()
+            # torch.cuda.empty_cache()
+
             if step % 150 == 0:
-                sample_and_plot_batch_ddim_aleatoric(
+                sample_and_plot_batch_ddim(
                     diffusion_model=diffusion,
-                    refiner=joint_refiner,
                     condition_batch=img_A,
                     gt_batch=img_B,
                     writer=writer,
                     step=step,
                     device=DEVICE,
-                    tag="DDIM_Sampling",
                     scheduler=inference_scheduler,
+                    tag="DDIM_Sampling",
 
                 )
 
@@ -308,7 +346,6 @@ if __name__ == '__main__':
 
         if epoch % 50 == 0:
             # Save the model after each epoch.
-            torch.save(diffusion.state_dict(), os.path.join(args.output_dir, f'diffusion-ep-{epoch}.pth'))
-            torch.save(joint_refiner.state_dict(), os.path.join(args.output_dir, f'joint_refiner-ep-{epoch}.pth'))
+            torch.save(diffusion.state_dict(), os.path.join(experiment_dir, f'diffusion-ep-{epoch + args.epoch_start}.pth'))
 
     print("Training complete.")

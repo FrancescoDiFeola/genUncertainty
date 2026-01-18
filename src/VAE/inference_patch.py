@@ -8,15 +8,13 @@ import nibabel as nib
 from pathlib import Path
 
 from torch.cuda.amp import autocast
-from monai.inferers import sliding_window_inference
 from skimage.metrics import structural_similarity as ssim
-from skimage.metrics import peak_signal_noise_ratio as psnr
 from monai.metrics import PSNRMetric, SSIMMetric
 
 from configs.test_options import TestOptions
 from models.autoencoder import Autoencoder
 from data.dataset_PATCH import CreateDataloader
-from utils.checkpoints_utils import load_checkpoint
+from src.VAE.utils.checkpoints_utils import load_checkpoint
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

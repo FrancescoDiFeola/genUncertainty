@@ -7,13 +7,13 @@ from monai.utils import set_determinism
 from generative.networks.schedulers import DDIMScheduler
 from tqdm import tqdm
 import numpy as np
-from torch.cuda.amp import autocast, GradScaler
+from torch.cuda.amp import autocast
 import matplotlib.pyplot as plt
 import csv
 from skimage.metrics import peak_signal_noise_ratio as compute_psnr, structural_similarity as compute_ssim
-from src.brlp.T1_T2_dataset import T1T2Dataset
-from src.brlp.ldct_hdct_dataset import LDCTHDCTDataset
-from src.brlp import networks
+from src import T1T2Dataset
+from src import LDCTHDCTDataset
+from src import networks
 from scipy.stats import pearsonr, spearmanr
 
 # -----------------------

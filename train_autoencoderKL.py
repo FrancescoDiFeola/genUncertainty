@@ -10,11 +10,11 @@ from torch.utils.data import DataLoader
 from torch.cuda.amp import autocast, GradScaler
 from generative.losses import PerceptualLoss, PatchAdversarialLoss
 from torch.utils.tensorboard import SummaryWriter
-from src.brlp.dataset import CT2DSliceDifferenceDataset
-from src.brlp import const
-from src.brlp import utils
-from src.brlp.latent_memory import LatentMemory
-from src.brlp import (
+from src import CT2DSliceDifferenceDataset
+from src import const
+from src import utils
+from src import LatentMemory
+from src import (
     KLDivergenceLoss, GradientAccumulation,
     init_autoencoder, init_patch_discriminator,
     get_dataset_from_pd

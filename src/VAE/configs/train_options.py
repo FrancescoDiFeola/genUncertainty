@@ -11,11 +11,11 @@ class TrainOptions:
         # Training settings
         self.phase = "train"
 
-        self.batchSize = 1
+        self.batchSize = 16
 
         # Optimizer settings
         self.lr = 0.0001
-        self.n_epochs = 300
+        self.n_epochs = 350
 
         # Mixed Precision
         self.amp = True

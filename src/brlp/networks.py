@@ -12,7 +12,7 @@ from generative.networks.nets import (
     ControlNet
 )
 from .my_unet import DiffusionModelUNetAleatoricConcat, DiffusionUNetWithUncertainty
-
+from .UViT import UViTBase, UViTContext
 """
 def load_if(checkpoints_path: Optional[str], network: nn.Module) -> nn.Module:
     
@@ -100,6 +100,42 @@ def init_patch_discriminator(checkpoints_path: Optional[str] = None) -> nn.Modul
                                              in_channels=1,
                                              out_channels=1)
     return load_if(checkpoints_path, patch_discriminator)
+
+def init_uvit_base(
+    img_size: int,
+    in_ch: int,
+    out_ch: int,
+    patch_size: int = 16,
+    embed_dim: int = 768,
+    depth: int = 12,
+    num_heads: int = 12,
+    mlp_ratio: float = 4.0,
+    checkpoints_path: Optional[str] = None,
+) -> nn.Module:
+    """
+    Baseline UViT
+    """
+
+    model = UViTBase(
+        img_size=img_size,
+        patch_size=patch_size,
+        in_chans=in_ch,               # e.g. noisy target + conditioning image
+        out_chans=out_ch,
+        embed_dim=embed_dim,
+        depth=depth,
+        num_heads=num_heads,
+        mlp_ratio=mlp_ratio,
+        qkv_bias=True,
+        norm_layer=nn.LayerNorm,
+        mlp_time_embed=True,          # standard for diffusion / flow
+        num_classes=-1,               # disables label conditioning
+        use_checkpoint=False,
+        conv=True,
+        skip=True,
+    )
+
+    return load_if(checkpoints_path, model)
+
 
 
 def init_ddpm_aleatoric(input_ch: int, out_ch: int, checkpoints_path: Optional[str] = None) -> nn.Module:

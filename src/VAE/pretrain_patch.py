@@ -4,75 +4,26 @@ from pathlib import Path
 # Prevent CUDA memory fragmentation
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:256"
 import torch
-import torch.nn as nn
 import torch.optim as optim
 from torch.cuda.amp import autocast, GradScaler
 #from torch.utils.tensorboard import SummaryWriter
 from torch.optim import lr_scheduler
 
 from monai.networks.nets import PatchDiscriminator
-from data.dataset_BASE import CreateDataloader
+from data.dataset_PATCH import CreateDataloader
 from models.autoencoder import Autoencoder
 from configs.train_options import TrainOptions
-from utils import utils
-from sklearn.manifold import TSNE
 import matplotlib.pyplot as plt
-import numpy as np
 
-from utils.losses import VAE_Losses
-from utils.checkpoints_utils import save_checkpoint, load_checkpoint
+from src.VAE.utils.losses import VAE_Losses
+from src.VAE.utils.checkpoints_utils import save_checkpoint, load_checkpoint
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def plot_latent_space(z_bl, z_fu, epoch, checkpoint_dir):
-
-    # Convert latent tensors to numpy
-    z_bl_np = z_bl.detach().cpu().numpy().reshape(len(z_bl), -1)
-    z_fu_np = z_fu.detach().cpu().numpy().reshape(len(z_fu), -1)
-
-    # Combine for joint t-SNE embedding
-    z_combined = np.concatenate([z_bl_np, z_fu_np])
-
-    if np.isnan(z_combined).any():
-        print(f"[WARNING] NaNs found in latent space at epoch {epoch} — skipping t-SNE plot.")
-        return
-
-    # Use safe perplexity for t-SNE
-    perplexity_value = min(30, len(z_combined) - 1)
-    tsne = TSNE(n_components=2, random_state=42, perplexity=perplexity_value)
-    z_embedded = tsne.fit_transform(z_combined)
-
-    # Save plot in district-named folder
-    checkpoint_dir_path = Path(checkpoint_dir)
-    plot_folder = checkpoint_dir_path / "plot"
-    latent_space_folder = plot_folder / "latent_space"
-    latent_space_folder.mkdir(parents=True, exist_ok=True)
-
-    # Plot the latent points
-    plt.figure(figsize=(6, 5))
-    plt.scatter(z_embedded[:len(z_bl), 0], z_embedded[:len(z_bl), 1], label="BASELINE", alpha=0.6)
-    plt.scatter(z_embedded[len(z_bl):, 0], z_embedded[len(z_bl):, 1], label="FOLLOWUP", alpha=0.6)
-
-    # Draw dashed lines between corresponding CT–PET latent vectors
-    for idx in range(len(z_bl)):
-        bl_point = z_embedded[idx]
-        fu_point = z_embedded[len(z_bl) + idx]
-        plt.plot([bl_point[0], fu_point[0]], [bl_point[1], fu_point[1]], 'w--', alpha=0.3, linewidth=0.8)
-
-    plt.legend()
-    plt.title(f"Latent Space - Epoch {epoch}")
-    plt.tight_layout()
-
-    # Save and log the image
-    plot_filename = os.path.join(latent_space_folder, f"latent_space_epoch_{epoch}.png")
-    plt.savefig(plot_filename)
-
-    #if writer:
-    #    img = plt.imread(plot_filename)
-    #   writer.add_image("Latent_Space", torch.tensor(img).permute(2, 0, 1), epoch)
-
-    plt.close()
+#==========================
+# FUNCTIONS AND SETTINGS
+#==========================
 
 
 def plot_loss_curves(loss_history, epoch, checkpoint_dir):
@@ -127,7 +78,7 @@ def plot_loss_curves(loss_history, epoch, checkpoint_dir):
     plt.tight_layout(rect=(0, 0.03, 1, 0.95))
 
     # Salva il grafico
-    plot_filename = os.path.join(loss_folder, f"loss_curves_epoch_{epoch}.png")
+    plot_filename = os.path.join(loss_folder, f"loss_curves.png")
     plt.savefig(plot_filename)
     plt.close()
     #print(f"[INFO] Saved loss curves plot to {plot_filename}")
@@ -207,6 +158,46 @@ def plot_reconstruction(original, reconstruction, epoch, checkpoint_dir):
     plt.close()
     #print(f"[INFO] Saved reconstruction plot to {plot_filename}")
 
+def save_latest(model, optimizer, epoch, checkpoint_dir, model_name):
+
+    checkpoint_path = os.path.join(checkpoint_dir, f"{model_name}_latest.pth")
+    checkpoint_data = {
+        "epoch": epoch,
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict()
+    }
+
+    torch.save(checkpoint_data, checkpoint_path)
+
+
+def expanded_center_mask(mask_tensor):
+
+    B, C, D, H, W = mask_tensor.shape
+    cd, ch, cw = D // 2, H // 2, W // 2
+
+    center_ids = mask_tensor[:, 0, cd, ch, cw]
+    target_ids = center_ids.view(B, 1, 1, 1, 1)
+
+    binary_mask = (mask_tensor == target_ids) & (target_ids != 0)
+    binary_mask = binary_mask.float()
+
+    if voxels > 0:
+        padding = voxels
+        kernel_size = 1 + 2 * voxels
+        binary_mask = F.max_pool3d(
+            binary_mask, 
+            kernel_size=kernel_size, 
+            stride=1, 
+            padding=padding
+        )
+
+    return binary_mask
+
+
+#==========================
+# TRAINING LOOP
+#==========================
+
 
 def train_autoencoder(opt):
     # Load Dataset
@@ -230,8 +221,8 @@ def train_autoencoder(opt):
         out_channels=1,
         num_res_blocks=[2, 2, 2],
         num_channels=num_channels,
-        attention_levels=[False, False, False],
-        latent_channels=3,
+        attention_levels=[False, False, True],
+        latent_channels=8,
         norm_num_groups=norm_num_groups,
         norm_eps=1e-6,
         with_encoder_nonlocal_attn=False,
@@ -252,10 +243,6 @@ def train_autoencoder(opt):
         in_channels=1, out_channels=1, norm="INSTANCE"
     ).to(device)
 
-    #if torch.cuda.device_count() > 1:
-    #    print(f"Using {torch.cuda.device_count()} GPUs!")
-    #    autoencoder = nn.DataParallel(autoencoder)
-    #    discriminator = nn.DataParallel(discriminator)
 
     # Loss handler
     loss_handler = VAE_Losses(
@@ -274,17 +261,11 @@ def train_autoencoder(opt):
     scaler_g = GradScaler(enabled=opt.amp)
     scaler_d = GradScaler(enabled=opt.amp)
 
-    # **Initialize Tensorboard Logging**
-    #writer = SummaryWriter(comment="eventlog_for_vae_training")
-    #avgloss = utils.AverageLoss()
-    #total_counter = 0  # print(f"TensorBoard logging directory: {writer.log_dir}")
-    #checkpoint_dir = "/mimer/NOBACKUP/groups/naiss2023-6-336/lcarusone/TESI_MAGISTRALE/src/VAE/checkpoints"
-    checkpoint_dir = "/home/lcarusone/TesiMagistrale/src/VAE/checkpoints_base"
 
+    checkpoint_dir = "/mimer/NOBACKUP/groups/naiss2023-6-336/lcarusone/TESI_MAGISTRALE/src/BASELINE/VAE/checkpoints_prova"
 
-    # **Load Checkpoints from checkpoint.py**
-    start_epoch = load_checkpoint(autoencoder, optimizer_g, checkpoint_dir, opt, model_name="autoencoder")
-    _ = load_checkpoint(discriminator, optimizer_d, checkpoint_dir, opt, model_name="discriminator")
+    start_epoch = load_checkpoint(autoencoder, optimizer_g, checkpoint_dir, model_name="autoencoder")
+    _ = load_checkpoint(discriminator, optimizer_d, checkpoint_dir, model_name="discriminator")
     print(f"Resuming training from epoch {start_epoch}")
 
     loss_history = {
@@ -295,8 +276,6 @@ def train_autoencoder(opt):
         "adv": []
     }
 
-    # apply_gradient_checkpointing(autoencoder.encoder)
-    # apply_gradient_checkpointing(autoencoder.decoder)
     print("[INFO] Starting training...")
 
     for epoch in range(start_epoch, opt.n_epochs):
@@ -307,24 +286,16 @@ def train_autoencoder(opt):
         epoch_iter = tqdm(train_loader, desc=f"Epoch {epoch + 1}/{opt.n_epochs}", leave=True)
 
         for i, batch in enumerate(epoch_iter):
-            # Free unused memory before processing a new batch
-            #torch.cuda.empty_cache()
-            #gc.collect()
-            image = batch['A'].to(device)
 
-            # img_ct = torch.empty(1, 1, 200, 200, 200).to(device)
-            # img_pet = torch.empty(1, 1, 150, 150, 150).to(device)
-            #print(f"shape of baseline image:{img_bl.shape}, shape of followup image: {img_fu.shape}")
+            image = batch['image'].to(device)
+            mask = batch['mask'].to(device)
 
             optimizer_g.zero_grad()
             optimizer_d.zero_grad()
 
             with autocast(enabled=True, dtype=torch.bfloat16):
-                # **Encode CT & PET images into shared latent space**
-                z, mu, log_var, reconstruction = autoencoder(image)
 
-                #print(f"Min valore input: {img_fu.min().item():.4f}, Max valore input: {img_fu.max().item():.4f}")
-                #print(f"Min valore output: {recon_fu.min().item():.4f}, Max valore output: {recon_fu.max().item():.4f}")
+                z, mu, log_var, reconstruction = autoencoder(image)
 
                 logits_reconstruction = discriminator(reconstruction.detach())[-1]  # Detach to avoid generator gradients
                 logits_real = discriminator(image.detach())[-1]
@@ -333,9 +304,7 @@ def train_autoencoder(opt):
                         loss_handler.adv_loss(logits_reconstruction, target_is_real=False, for_discriminator=True) +
                         loss_handler.adv_loss(logits_real, target_is_real=True, for_discriminator=True)
                 )
-                #print(f"loss_d_fu:{loss_d_fu}")
 
-                # **Backpropagation for Discriminator**
                 scaler_d.scale(loss_d).backward()
                 # **Gradient Accumulation for Discriminator**
                 if (i + 1) % opt.gradient_accumulation_steps == 0:
@@ -345,16 +314,9 @@ def train_autoencoder(opt):
 
                 # **Compute Generator Losses**
                 losses, loss_g = loss_handler.compute_losses(
-                    reconstruction, image, mu, log_var, discriminator
+                    reconstruction, image, mu, log_var, discriminator, mask
                 )
 
-                #print("DEBUG: Losses computed successfully!")  # Debugging line
-                #print(f"losses: {losses}, loss_g: {loss_g}")
-
-                #print(f"Recon FU: {recon_fu.shape}")
-                #print(f"Latent Mean: {mu_bl.shape}, Latent Mean: {mu_fu.shape}, Log Variance: {log_var_bl.shape}, Log Variance: {log_var_fu.shape}")
-
-                # **Backpropagation for Generator**
                 scaler_g.scale(loss_g).backward()
 
                 # **Gradient Accumulation for Generator**
@@ -387,29 +349,26 @@ def train_autoencoder(opt):
 
 
 
+        plot_loss_curves(loss_history, epoch + 1, checkpoint_dir)
+
+        save_latest(autoencoder, optimizer_g, epoch, checkpoint_dir, model_name="autoencoder")
+        save_latest(discriminator, optimizer_d, epoch, checkpoint_dir, model_name="discriminator")
+
         if (epoch + 1) % 50 == 0:
-        #    if not (torch.isnan(z_bl).any() or torch.isnan(z_fu).any()):
-        #        plot_latent_space(z_bl, z_fu, epoch + 1, checkpoint_dir=checkpoint_dir)
-        #    else:
-        #        print(f"[WARNING] Skipping latent space plot at epoch {epoch + 1} due to NaNs in z_bl or z_fu.")
-
-            plot_loss_curves(loss_history, epoch + 1, checkpoint_dir)
-
-        if (epoch + 1) % 20 == 0:
             if not torch.isnan(reconstruction).any():
                 plot_reconstruction(image, reconstruction, epoch + 1, checkpoint_dir)
             else:
                 print(f"[WARNING] Skipping reconstruction plot at epoch {epoch + 1} due to NaNs in reconstruction.")
 
+            save_checkpoint(autoencoder, optimizer_g, epoch, checkpoint_dir, model_name="autoencoder")
+            save_checkpoint(discriminator, optimizer_d, epoch, checkpoint_dir, model_name="discriminator")
 
 
         print(
             f"Epoch [{epoch + 1}/{opt.n_epochs}], Recon : {avg_loss['recon']:.6f}, KL Loss: {avg_loss['kl']:.6f}, Perceptual Loss: {avg_loss['perceptual']:.6f}, Adv Loss: {avg_loss['adv']:.6f}")
 
-        # **Save Model Checkpoint**
-        if (epoch + 1) % opt.val_interval == 0:
-            save_checkpoint(autoencoder, optimizer_g, epoch, checkpoint_dir, opt, model_name="autoencoder")
-            save_checkpoint(discriminator, optimizer_d, epoch, checkpoint_dir, opt, model_name="discriminator")
+
+
 
     print("[INFO] Training Complete! Model saved to pretrained/checkpoints")
 

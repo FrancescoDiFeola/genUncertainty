@@ -1,6 +1,5 @@
 import os
 import argparse
-import warnings
 import torch
 import csv
 import numpy as np
@@ -10,11 +9,9 @@ from skimage.metrics import peak_signal_noise_ratio as compute_psnr, structural_
 from tqdm import tqdm
 from monai.utils import set_determinism
 from torch.utils.data import DataLoader
-from torch.cuda.amp import autocast
 from generative.losses import PerceptualLoss
-from torch.utils.tensorboard import SummaryWriter
-from src.brlp.dataset import CT2DSliceDifferenceDataset
-from src.brlp import init_autoencoder
+from src import CT2DSliceDifferenceDataset
+from src import init_autoencoder
 
 set_determinism(0)
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'

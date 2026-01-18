@@ -9,14 +9,14 @@ from torch.utils.data import DataLoader
 from monai.utils import set_determinism
 from monai.networks.schedulers import RFlowScheduler
 from tqdm import tqdm
-from src.brlp.ldct_hdct_dataset import LDCTHDCTDataset
-from src.brlp import networks
+from src import LDCTHDCTDataset
+from src import networks
 import matplotlib.pyplot as plt
 from torchvision import transforms
-from src.brlp.T1_T2_dataset import T1T2Dataset
-from src.brlp.Mri2DSlice_dataset import Mri2DSlicedataset
-from src.brlp.CS_dataset import CityscapesColorDataset
-from src.brlp.ND_dataset import PairedImageDataset
+from src import T1T2Dataset
+from src import Mri2DSlicedataset
+from src import CityscapesColorDataset
+from src import PairedImageDataset
 
 
 # -----------------------

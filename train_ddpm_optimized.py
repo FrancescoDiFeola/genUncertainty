@@ -27,8 +27,8 @@ from monai.transforms import Compose, LoadImaged, ScaleIntensityRangeD, EnsureCh
 from monai.data import CacheDataset
 
 # your imports
-from src.brlp.Mri2DSlice_dataset import Mri2DSlicedataset
-from src.brlp import networks
+from src import Mri2DSlicedataset
+from src import networks
 from generative.networks.schedulers import DDPMScheduler, DDIMScheduler
 from inferers import DiffusionInferer
 

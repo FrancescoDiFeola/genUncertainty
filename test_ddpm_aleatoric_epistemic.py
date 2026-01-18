@@ -10,10 +10,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 import csv
 from skimage.metrics import peak_signal_noise_ratio as compute_psnr, structural_similarity as compute_ssim
-from src.brlp.T1_T2_dataset import T1T2Dataset
-from src.brlp.ldct_hdct_dataset import LDCTHDCTDataset
-from src.brlp import networks
-from src.brlp.my_unet import FixedMaskDropout
+from src import T1T2Dataset
+from src import LDCTHDCTDataset
+from src import networks
+from src import FixedMaskDropout
 # -----------------------
 # ✅ Set environment
 # -----------------------
