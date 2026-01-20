@@ -827,3 +827,13 @@ class Autoencoder(AutoencoderKL):
 
 
         return z, mu, log_var, reconstruction
+
+
+class AutoencoderWrapper(torch.nn.Module):
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+
+    def forward(self, x):
+        z, mu, logvar, reconstruction = self.model(x)
+        return reconstruction
