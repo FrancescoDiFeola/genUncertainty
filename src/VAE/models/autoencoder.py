@@ -837,3 +837,14 @@ class AutoencoderWrapper(torch.nn.Module):
     def forward(self, x):
         z, mu, logvar, reconstruction = self.model(x)
         return reconstruction
+
+
+class EncoderWrapper(torch.nn.Module):
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+
+    def forward(self, x):
+        latent = self.model.encoder(x)
+        mu, log_var = torch.chunk(latent, 2, dim=1)
+        return mu
