@@ -241,7 +241,7 @@ def init_ddpm(input_ch: int, out_ch: int, checkpoints_path: Optional[str] = None
     )
     return load_if(checkpoints_path, ddpm)
 
-def init_latent_diffusion(checkpoints_path: Optional[str] = None) -> nn.Module:
+def init_latent_diffusion(input_ch: int, out_ch: int, checkpoints_path: Optional[str] = None) -> nn.Module:
     """
     Load the UNet from the diffusion model (pretrained if `checkpoints_path` points to previous params).
 
@@ -253,9 +253,9 @@ def init_latent_diffusion(checkpoints_path: Optional[str] = None) -> nn.Module:
     """
 
     latent_diffusion = DiffusionModelUNet(spatial_dims=2,
-                                          in_channels=7,
+                                          in_channels=input_ch,
                                           # ho cambiato il numero di canali a 6 perchè faccio spatial conditioning
-                                          out_channels=3,
+                                          out_channels=out_ch,
                                           num_res_blocks=2,
                                           num_channels=(256, 512, 768),
                                           attention_levels=(False, True, True),
@@ -268,7 +268,24 @@ def init_latent_diffusion(checkpoints_path: Optional[str] = None) -> nn.Module:
                                           # cross_attention_dim=8,
                                           num_class_embeds=None,
                                           upcast_attention=True,
-                                          use_flash_attention=False)
+                                          use_flash_attention=True
+                                          )
+
+    # Random initialization of the UNet weights
+    for m in latent_diffusion.modules():
+        if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+            init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+            if m.bias is not None:
+                init.zeros_(m.bias)
+        elif isinstance(m, nn.Linear):
+            init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+            if m.bias is not None:
+                init.zeros_(m.bias)
+        elif isinstance(m, nn.GroupNorm) or isinstance(m, nn.LayerNorm):
+            if m.weight is not None:
+                init.ones_(m.weight)
+            if m.bias is not None:
+                init.zeros_(m.bias)
 
     return load_if(checkpoints_path, latent_diffusion)
 

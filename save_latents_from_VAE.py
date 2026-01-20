@@ -14,10 +14,11 @@ from src.brlp.CTPET_dataset import CTPETDataset
 from src.brlp.Mri2DSlice_dataset import Mri2DSlicedataset
 from src.brlp.CS_dataset import CityscapesColorDataset
 from src.brlp.ND_dataset import PairedImageDataset
+from src.VAE.data.dataset_Denoising import LDCTHDCTDataset
 
 # --- CONFIGURAZIONE ---
-INPUT_ROOT = "/mimer/NOBACKUP/groups/naiss2023-6-336/lcarusone/TESI_MAGISTRALE/dataset/patches_test/images"
-OUTPUT_ROOT = "/mimer/NOBACKUP/groups/naiss2023-6-336/lcarusone/TESI_MAGISTRALE/dataset/latents_test_masked"
+# INPUT_ROOT = "/mimer/NOBACKUP/groups/naiss2023-6-336/lcarusone/TESI_MAGISTRALE/dataset/patches_test/images"
+# OUTPUT_ROOT = "/mimer/NOBACKUP/groups/naiss2023-6-336/lcarusone/TESI_MAGISTRALE/dataset/latents_test_masked"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 # PARAMETRI PRESTAZIONI
@@ -84,57 +85,24 @@ autoencoder = AutoencoderKL(
 )
 autoencoder = autoencoder.to(DEVICE)
 
-checkpoint_dir = "/mimer/NOBACKUP/groups/naiss2023-6-336/lcarusone/TESI_MAGISTRALE/src/VAE/checkpoints_masked"
+checkpoint_dir = "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/VAE_Denoising/"
 _ = load_checkpoint(autoencoder, optimizer=None, checkpoint_dir=checkpoint_dir, model_name="autoencoder")
-encoder_only = EncoderWrapper(autoencoder).to(DEVICE)
-encoder_only.eval()
+autoencoder.eval()
 
 # --- 3. LOOP OTTIMIZZATO (FLOAT32 + FIX SHAPE) ---
 if __name__ == "__main__":
-    task ==
-    # Load the LDCT/HDCT dataset
-    if task == "T1T2":
-        dataset = T1T2Dataset(
-            annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_A.csv',
-            annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_B.csv',
 
-        )
+    dataset = LDCTHDCTDataset(
+        annotation='/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/src/VAE/csvs/Mayo_total_stacked_shuffled.csv',
+    )
 
-    elif task == "CS":
-        transform = transforms.Compose([
-            transforms.Resize((256, 512)),
-            transforms.ToTensor()
-        ])
-
-        dataset = CityscapesColorDataset(
-            root=args.dataroot,
-            split="train",
-            transform=transform,
-            target_transform=transform
-        )
-
-    elif task == "ND":
-        transform = transforms.Compose([
-            transforms.Resize((272, 480)),
-            transforms.ToTensor()
-        ])
-
-        dataset = PairedImageDataset(
-            csv_path="train.csv",
-            root_dir="/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/ND_dataset",
-            transform_A=transform,
-            transform_B=transform
-        )
-
-    elif task == "CTPET":
-        dataset = Mri2DSlicedataset(args)
-
-    elif task == "denoising":
-        dataset = LDCTHDCTDataset(
-            annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_LOWDOSE.csv',
-            annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_FULLDOSE.csv',
-        )
-
+    loader = DataLoader(
+        dataset,
+        batch_size=BATCH_SIZE,
+        shuffle=False,
+        num_workers=NUM_WORKERS,
+        pin_memory=True
+    )
 
     print(f"Inizio elaborazione (Output Shape [1, 3, ...]) con Batch Size {BATCH_SIZE}...")
 
@@ -142,25 +110,27 @@ if __name__ == "__main__":
     count = 0
 
     with torch.no_grad():
-        for batch_tensors, batch_paths in tqdm(loader):
+        for batch in tqdm(loader):
 
-            valid_indices = [i for i, p in enumerate(batch_paths) if p != ""]
-            if not valid_indices:
-                continue
+            inputs = batch['A'].to(DEVICE)
+            # valid_indices = [i for i, p in enumerate(batch_paths) if p != ""]
+            # if not valid_indices:
+            #    continue
 
-            inputs = batch_tensors[valid_indices].to(DEVICE, non_blocking=True)
-            paths = [batch_paths[i] for i in valid_indices]
+            #inputs = batch_tensors[valid_indices].to(DEVICE, non_blocking=True)
+            #paths = [batch_paths[i] for i in valid_indices]
 
             # Inferenza (Float32)
-            latents = encoder_only(inputs)  # Output: [Batch, 3, 16, 16, 16]
+            _, latents, _ = autoencoder(inputs)  # Output: [Batch, 3, 16, 16, 16]
             print(f"Latents shape: {latents.shape}")
 
             sq_sum += (latents ** 2).sum().item()
             count += latents.numel()
 
             # Sposta su CPU
-            latents_cpu = latents.cpu()
+            # latents_cpu = latents.cpu()
 
+            """
             for i, rel_path in enumerate(paths):
                 dest_path = os.path.join(OUTPUT_ROOT, rel_path.replace("_ct.nii.gz", ".pt"))
                 dest_dir = os.path.dirname(dest_path)
@@ -173,8 +143,9 @@ if __name__ == "__main__":
 
 
                 torch.save(tensor_to_save, dest_path)
+            """
 
-    print("\nFinito! Dataset latente ricreato correttamente in:", OUTPUT_ROOT)
+    # print("\nFinito! Dataset latente ricreato correttamente in:", OUTPUT_ROOT)
 
     sigma2 = sq_sum / count
     scale = 1.0 / np.sqrt(sigma2)

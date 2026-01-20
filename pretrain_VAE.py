@@ -387,7 +387,7 @@ def train_autoencoder(opt):
 
             with autocast(enabled=True, dtype=torch.bfloat16):
                 # **Encode CT & PET images into shared latent space**
-                reconstruction, mu, log_var= autoencoder(image)  #  z, mu, log_var, reconstruction
+                reconstruction, mu, log_var = autoencoder(image)  #  z, mu, log_var, reconstruction
 
                 #print(f"Min valore input: {img_fu.min().item():.4f}, Max valore input: {img_fu.max().item():.4f}")
                 #print(f"Min valore output: {recon_fu.min().item():.4f}, Max valore output: {recon_fu.max().item():.4f}")

@@ -828,7 +828,7 @@ class Autoencoder(AutoencoderKL):
 
         return z, mu, log_var, reconstruction
 
-
+#  Wrapper utili per la classe Autoencoder sopra (per la versione di monai chiamare i metodi interni)
 class AutoencoderWrapper(torch.nn.Module):
     def __init__(self, model):
         super().__init__()

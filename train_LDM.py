@@ -10,18 +10,20 @@ from torchvision import transforms
 from monai.utils import set_determinism
 from generative.networks.schedulers import DDPMScheduler
 from tqdm import tqdm
-# from src.brlp.ldct_hdct_dataset import LDCTHDCTAutoKLDataset
-from src.brlp.ldct_hdct_dataset import LDCTHDCTDataset
 from src.brlp import networks
 from inferers import DiffusionInferer
 import numpy as np
 import matplotlib.pyplot as plt
 from generative.networks.schedulers import DDIMScheduler
+from monai.networks.nets.autoencoderkl import AutoencoderKL
+from src.brlp.ldct_hdct_dataset import LDCTHDCTDataset
 from src.brlp.T1_T2_dataset import T1T2Dataset
+from src.brlp.CTPET_dataset import CTPETDataset
 from src.brlp.CS_dataset import CityscapesColorDataset
 from src.brlp.Mri2DSlice_dataset import Mri2DSlicedataset
 from src.brlp.ND_dataset import PairedImageDataset
-from src.brlp.UViT import UViTBase
+from src.VAE.utils.checkpoints_utils import load_checkpoint
+
 
 # -----------------------
 # ✅ Set environment
@@ -39,12 +41,14 @@ NUM_GPUS = torch.cuda.device_count()
 @torch.no_grad()
 def sample_and_plot_batch_ddim(
         diffusion_model,
+        autoencoder,
         condition_batch,
         gt_batch,
         writer,
         step,
         device,
         scheduler,
+        scaling,
         tag="DDIM_Sampling",
         num_training_steps=1000,
         num_inference_steps=50,
@@ -81,7 +85,11 @@ def sample_and_plot_batch_ddim(
 
         x, _ = scheduler.step(pred_noise, t_tensor, x)
 
-    pred_denoised = x
+    pred_denoised_latent = x
+
+    pred_denoised = autoencoder.decode(pred_denoised_latent/scaling)
+    gt_batch = autoencoder.decode(gt_batch/scaling)
+    condition_batch = autoencoder.decode(condition_batch/scaling)
 
     # ---- Plotting ---- #
     def norm(x):
@@ -173,6 +181,7 @@ if __name__ == '__main__':
     parser.add_argument('--dataset_csv', required=False, type=str)
     parser.add_argument('--output_dir', default="/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/", type=str)
     parser.add_argument('--diff_ckpt', default=None, type=str)
+    parser.add_argument('--VAE_ckpt', default=None, type=str)
     parser.add_argument('--experiment_name', required=True, type=str)
     parser.add_argument('--task', required=True, type=str)
     parser.add_argument('--annotation_A', required=False, type=str)
@@ -200,7 +209,7 @@ if __name__ == '__main__':
     # -----------------------
     # ✅ Load dataset
     # -----------------------
-
+    scaling_factor = 1
     # Load the LDCT/HDCT dataset
     if args.task == "T1T2":
         dataset = T1T2Dataset(
@@ -243,6 +252,7 @@ if __name__ == '__main__':
             annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_LOWDOSE.csv',
             annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_FULLDOSE.csv',
         )
+        scaling_factor = 7.832608
 
     train_loader = DataLoader(dataset=dataset,
                               batch_size=args.batch_size,
@@ -252,13 +262,34 @@ if __name__ == '__main__':
                               pin_memory=True)
 
     # -----------------------
+    # ✅ Load autoencoder
+    # -----------------------
+    autoencoder = AutoencoderKL(
+        spatial_dims=2,
+        in_channels=1,
+        out_channels=1,
+        channels=(128, 128, 256),
+        latent_channels=3,
+        num_res_blocks=2,
+        attention_levels=(False, False, False),
+        with_encoder_nonlocal_attn=False,
+        with_decoder_nonlocal_attn=False,
+    )
+    autoencoder = autoencoder.to(DEVICE)
+
+    # **Load Checkpoints from checkpoint.py**
+    _ = load_checkpoint(autoencoder, optimizer=None, checkpoint_dir=args.VAE_ckpt, model_name="autoencoder")
+    autoencoder.eval()
+
+    # -----------------------
     # ✅ Load diffusion model
     # -----------------------
-    diffusion = networks.init_uvit_base(img_size=256, in_ch=args.in_ch, out_ch=args.out_ch, checkpoints_path=args.diff_ckpt).to(DEVICE)
+    diffusion = networks.init_ddpm(args.in_ch, args.out_ch, args.diff_ckpt).to(DEVICE)
 
     if NUM_GPUS > 1:
         print(f"Using {NUM_GPUS} GPUs")
         diffusion = torch.nn.DataParallel(diffusion)
+        autoencoder = torch.nn.DataParallel(autoencoder)
 
     optimizer = torch.optim.AdamW(diffusion.parameters(), lr=args.lr)
 
@@ -297,23 +328,29 @@ if __name__ == '__main__':
             img_A = batch["A"].to(DEVICE)  # Low-dose CT
             img_B = batch["B"].to(DEVICE)  # High-dose CT
 
-            noise = torch.randn_like(img_B)
-            timesteps = torch.randint(0, scheduler.num_train_timesteps, (img_B.size(0),), device=DEVICE).long()
+            with torch.no_grad():
+                _, img_A_latent, _ = autoencoder(img_A)
+                _, img_B_latent, _ = autoencoder(img_B)
+
+            img_A_latent = img_A_latent * scaling_factor
+            img_B_latent = img_B_latent * scaling_factor
+
+            noise = torch.randn_like(img_B_latent)
+            timesteps = torch.randint(0, scheduler.num_train_timesteps, (img_B_latent.size(0),), device=DEVICE).long()
 
             with autocast(enabled=True):
                 optimizer.zero_grad(set_to_none=True)
 
                 # Predict noise + log variance
                 noise_pred, _ = inferer(
-                    inputs=img_B,
-                    concat=img_A,
+                    inputs=img_B_latent,
+                    concat=img_A_latent,
                     diffusion_model=diffusion,
                     noise=noise,
                     timesteps=timesteps,
-                    condition=img_A,
+                    condition=img_A_latent,
                     mode='concat'
                 )
-
                 # Compute loss
                 loss = F.mse_loss(noise.float(), noise_pred.float())
 
@@ -332,12 +369,14 @@ if __name__ == '__main__':
             if step % 150 == 0:
                 sample_and_plot_batch_ddim(
                     diffusion_model=diffusion,
-                    condition_batch=img_A[8].unsqueeze(0),
-                    gt_batch=img_B[8].unsqueeze(0),
+                    autoencoder=autoencoder,
+                    condition_batch=img_A_latent,
+                    gt_batch=img_B_latent,
                     writer=writer,
                     step=step,
                     device=DEVICE,
                     scheduler=inference_scheduler,
+                    scaling=scaling_factor,
                     tag="DDIM_Sampling",
 
                 )

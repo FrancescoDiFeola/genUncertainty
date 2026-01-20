@@ -396,17 +396,14 @@ class UViTBase(nn.Module):
     def no_weight_decay(self):
         return {'pos_embed'}
 
-    def forward(self, x, timesteps, y=None):
+    def forward(self, x, timesteps, context=None):
         x = self.patch_embed(x)
         B, L, D = x.shape
 
         time_token = self.time_embed(timestep_embedding(timesteps, self.embed_dim))
         time_token = time_token.unsqueeze(dim=1)
         x = torch.cat((time_token, x), dim=1)
-        if y is not None:
-            label_emb = self.label_emb(y)
-            label_emb = label_emb.unsqueeze(dim=1)
-            x = torch.cat((label_emb, x), dim=1)
+
         x = x + self.pos_embed
 
         skips = []
@@ -423,6 +420,6 @@ class UViTBase(nn.Module):
         x = self.decoder_pred(x)
         assert x.size(1) == self.extras + L
         x = x[:, self.extras:, :]
-        x = unpatchify(x, self.in_chans)
+        x = unpatchify(x, self.out_chans)
         x = self.final_layer(x)
         return x
