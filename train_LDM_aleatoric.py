@@ -49,6 +49,23 @@ def heteroscedastic_loss(pred_mean, pred_logvar, target_noise, min_logvar=-7.0, 
     reg = precision.mean()  # higher when variance is low
     return base_loss.mean() + reg_weight * reg
 
+def uncertainty_calibration_loss(pred_u_img, err_img, eps=1e-8):
+    """
+    pred_u_img: (B,1,H,W)  (can be logvar-like or variance-like signal)
+    err_img:    (B,1,H,W)  (absolute error map)
+    """
+    # Make both comparable and stable
+    pred = pred_u_img
+    pred = pred - pred.mean(dim=(2,3), keepdim=True)
+    pred = pred / (pred.std(dim=(2,3), keepdim=True) + eps)
+
+    err = err_img
+    err = err - err.mean(dim=(2,3), keepdim=True)
+    err = err / (err.std(dim=(2,3), keepdim=True) + eps)
+
+    # MSE on normalized maps
+    return F.mse_loss(pred, err)
+
 # -----------------------
 # ✅ Log to tensorboard
 # -----------------------
@@ -196,6 +213,152 @@ def sample_and_plot_batch_ddim_aleatoric(
     writer.add_figure(tag, plt.gcf(), global_step=step)
     plt.close()
 
+@torch.no_grad()
+def sample_and_plot_batch_ddim_aleatoric_v2(
+        diffusion_model,
+        autoencoder,
+        uncertainty_decoder,
+        condition_batch,
+        gt_batch,
+        writer,
+        step,
+        device,
+        scheduler,
+        scaling,
+        tag="DDIM_Sampling",
+
+        num_training_steps=1000,
+        num_inference_steps=50,
+        beta_start=0.0015,
+        beta_end=0.0205,
+):
+    """
+    DDIM sampling + tensorboard batch display with uncertainty.
+    Plots [LD | GT | Prediction | Uncertainty] per row.
+    """
+
+    diffusion_model.eval()
+    uncertainty_decoder.eval()
+    B, C, H, W = condition_batch.shape
+
+    scheduler.set_timesteps(num_inference_steps)
+    scheduler.alphas_cumprod = scheduler.alphas_cumprod.to(device)
+    x = torch.randn_like(condition_batch).to(device)
+    condition_batch = condition_batch.to(device)
+    gt_batch = gt_batch.to(device)
+    model_input = torch.cat([noise, condition_batch], dim=1)  # [B, 2, H, W]
+    uncertainty = None
+
+    progress = tqdm(scheduler.timesteps, desc="DDIM Sampling")
+
+    for t in progress:
+        t_tensor = torch.tensor([t], device=device).long()
+
+        # Reconstruct input with current latent
+        model_input = torch.cat([x, condition_batch], dim=1)
+
+        with autocast(enabled=True):
+            pred_noise, pred_logvar = diffusion_model(x=model_input, timesteps=t_tensor, context=None)
+
+        x, _ = scheduler.step(pred_noise, t_tensor, x)
+        uncertainty = pred_logvar
+
+    pred_denoised_latent = x
+    uncertainty = uncertainty_decoder(uncertainty)
+    uncertainty_map_latent = torch.exp(uncertainty)
+
+    pred_denoised = autoencoder.decode(pred_denoised_latent/scaling)
+    gt_batch = autoencoder.decode(gt_batch/scaling)
+    condition_batch = autoencoder.decode(condition_batch/scaling)
+
+    # Upsample to match decoded resolution
+    uncertainty_map = F.interpolate(
+        uncertainty_map_latent,
+        size=pred_denoised.shape[-2:],  # (H, W) of decoded image
+        mode="bilinear",
+        align_corners=False,
+    )
+
+    # ---- Plotting ---- #
+    def norm(x):
+        x = x.clone()
+        x -= x.amin(dim=(1, 2, 3), keepdim=True)
+        x /= (x.amax(dim=(1, 2, 3), keepdim=True) + 1e-8)
+        return x
+
+    def norm_percentile(x, pmin=1, pmax=99):
+        x = x.clone().to(torch.float32)
+        B = x.shape[0]
+        normed = torch.zeros_like(x)
+        for i in range(B):
+            x_i = x[i]
+            min_val = torch.quantile(x_i, pmin / 100.0)
+            max_val = torch.quantile(x_i, pmax / 100.0)
+            x_i = torch.clamp(x_i, min=min_val, max=max_val)
+            normed[i] = (x_i - min_val) / (max_val - min_val + 1e-8)
+        return normed
+
+    ld = condition_batch.cpu().detach()
+    gt = gt_batch.cpu().detach()
+    pred = pred_denoised.cpu().detach()
+    unc = norm_percentile(uncertainty_map).cpu().detach()
+    error = norm_percentile(abs(pred-gt))
+
+    # Create figure
+    num_samples = B
+    fig, axes = plt.subplots(nrows=num_samples, ncols=5, figsize=(8, 2.5 * num_samples))
+    if B == 1:
+        axes = [axes]  # make iterable
+    """
+    for i in range(num_samples):
+        images = [ld[i], gt[i], pred[i], unc[i], error[i]]
+        titles = ["T1", "T2", "Prediction", "Uncertainty", "Error"]
+
+        for j in range(5):
+            ax = axes[i][j] if B > 1 else axes[0][j]
+            ax.set_axis_off()
+            ax.set_title(titles[j])
+            img = images[j].squeeze(0).cpu().numpy()
+
+            if titles[j] == "Uncertainty" or titles[j] == "Error":
+                ax.imshow(img, cmap='hot')
+            else:
+                ax.imshow(img, cmap='gray')
+    """
+
+    for i in range(num_samples):
+        images = [ld[i], gt[i], pred[i], unc[i], error[i]]
+        titles = ["T1", "T2", "Prediction", "uncertainty", "Error"]
+
+        for j in range(5):
+            ax = axes[i][j] if B > 1 else axes[0][j]
+            ax.set_axis_off()
+            ax.set_title(titles[j])
+
+            img = images[j].cpu().numpy()  # shape: (C, H, W) or (1, H, W)
+            if img.ndim == 3:
+                # (C, H, W) -> (H, W) or (H, W, 3)
+                if img.shape[0] == 1:
+                    img = img[0]  # (H, W) grayscale
+                elif img.shape[0] == 3:
+                    img = np.transpose(img, (1, 2, 0))  # (H, W, 3) RGB
+
+            if titles[j] == "Uncertainty" or titles[j] == "Error":
+                # always show error as grayscale
+                if img.ndim == 3 and img.shape[2] == 3:
+                    err_gray = np.mean(img, axis=2)
+                    ax.imshow(err_gray, cmap="hot")
+                else:
+                    ax.imshow(img, cmap="hot")
+            else:
+                if img.ndim == 2:
+                    ax.imshow(img, cmap="gray")
+                else:
+                    ax.imshow(img)  # RGB
+
+    plt.tight_layout()
+    writer.add_figure(tag, plt.gcf(), global_step=step)
+    plt.close()
 
 
 # -----------------------
@@ -208,6 +371,7 @@ if __name__ == '__main__':
     parser.add_argument('--output_dir', default="/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/", type=str)
     parser.add_argument('--diff_ckpt', default=None, type=str)
     parser.add_argument('--VAE_ckpt', default=None, type=str)
+    parser.add_argument('--unc_ckpt', default=None, type=str)
     parser.add_argument('--experiment_name', required=True, type=str)
     parser.add_argument('--task', required=True, type=str)
     parser.add_argument('--annotation_A', required=False, type=str)
@@ -220,6 +384,7 @@ if __name__ == '__main__':
     parser.add_argument('--diff_loss_weight', type=float, default=1.0)
     parser.add_argument('--in_ch', default=2, type=int)
     parser.add_argument('--out_ch', default=1, type=int)
+    parser.add_argument('--uncertainty_calibration', action='store_true', help='enable uncertainty calibration')
 
     parser.add_argument('--dataroot', required=False, help='path to images (should have subfolders trainA, trainB, valA, valB, etc)')
     parser.add_argument('--mri_modalities', default=["t1n", "t1c", "t2w", "t2f"], help='which MRI modality to use', nargs='+', type=str)
@@ -312,12 +477,20 @@ if __name__ == '__main__':
     # -----------------------
     diffusion = networks.init_ddpm_aleatoric(args.in_ch, args.out_ch, args.diff_ckpt).to(DEVICE)
 
+    if args.uncertainty_calibration:
+        uncertainty_decoder = networks.init_latent_uncertainty_decoder(args.unc_decoder_ckpt, 3, 1).to(DEVICE)
+
+
     if NUM_GPUS > 1:
         print(f"Using {NUM_GPUS} GPUs")
         diffusion = torch.nn.DataParallel(diffusion)
         autoencoder = torch.nn.DataParallel(autoencoder)
 
-    optimizer = torch.optim.AdamW(diffusion.parameters(), lr=args.lr)
+
+    if args.uncertainty_calibration:
+        optimizer = torch.optim.AdamW(list(diffusion.parameters()) + list(uncertainty_decoder.parameters()), lr=args.lr)
+    else:
+        optimizer = torch.optim.AdamW(diffusion.parameters(), lr=args.lr)
 
     scheduler = DDPMScheduler(
         num_train_timesteps=1000,
@@ -346,6 +519,8 @@ if __name__ == '__main__':
     # -----------------------
     for epoch in range(args.n_epochs):
         diffusion.train()
+        uncertainty_decoder.train() if args.uncertainty_calibration else None
+
         epoch_loss = 0
         progress_bar = tqdm(enumerate(train_loader), total=len(train_loader))
         progress_bar.set_description(f"Epoch {epoch}")
@@ -368,7 +543,7 @@ if __name__ == '__main__':
                 optimizer.zero_grad(set_to_none=True)
 
                 # Predict noise + log variance
-                pred_mean_var, noisy_image = inferer(
+                pred_mean_var, noisy_latent = inferer(
                     inputs=img_B_latent,
                     concat=img_A_latent,
                     diffusion_model=diffusion,
@@ -378,7 +553,41 @@ if __name__ == '__main__':
                     mode='concat'
                 )
                 # Compute loss
-                loss = args.diff_loss_weight * heteroscedastic_loss(pred_mean_var[0], pred_mean_var[1], noise)
+                loss_diff = args.diff_loss_weight * heteroscedastic_loss(pred_mean_var[0], pred_mean_var[1], noise)
+                loss = loss_diff
+
+                # -------------------------------------------------
+                # (B) OPTIONAL: image-space uncertainty calibration
+                # -------------------------------------------------
+                if args.uncertainty_calibration:
+
+                    # 1) Build x0_hat from epsilon prediction (MONAI-compatible)
+                    alphas_cumprod = scheduler.alphas_cumprod.to(noisy_latent.device)
+                    a_t = alphas_cumprod[timesteps].reshape(-1, 1, 1, 1)
+
+                    x0_hat = (noisy_latent - torch.sqrt(1.0 - a_t) * pred_mean_var[0]) / (torch.sqrt(a_t) + 1e-8)
+
+                    # IMPORTANT: block gradients to mean head through x0_hat
+                    x0_hat = x0_hat.detach()
+
+                    # 2) Decode x0_hat to image-space (no grad)
+                    with torch.no_grad():
+                        x0_hat_img = autoencoder.decode(x0_hat / scaling_factor)
+
+                    # 3) Target error map (this is a target so it should be detached)
+                    err_img = (img_B - x0_hat_img).abs().mean(dim=1, keepdim=True).detach()
+
+                    # 4) Predicted image uncertainty from latent logvar
+                    pred_u_img = uncertainty_decoder(
+                        pred_mean_var[1]  # DO NOT detach
+                    )
+
+                    loss_unc = args.uncertainty_loss_weight * uncertainty_calibration_loss(
+                        pred_u_img,
+                        err_img
+                    )
+
+                    loss = loss + loss_unc
 
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -388,6 +597,8 @@ if __name__ == '__main__':
             writer.add_scalar('train/loss', loss.item(), global_counter['train'])
             writer.add_scalar("train/logvar_mean", pred_mean_var[1].mean().item(), global_counter['train'])
             writer.add_scalar("train/logvar_std", pred_mean_var[1].std().item(), global_counter['train'])
+            if args.uncertainty_calibration:
+                writer.add_scalar("train/loss_unc", loss_unc.item(), global_counter["train"])
             epoch_loss += loss.item()
             global_counter['train'] += 1
             progress_bar.set_postfix({"loss": epoch_loss / (step + 1)})
@@ -395,9 +606,10 @@ if __name__ == '__main__':
             # torch.cuda.empty_cache()
 
             if step % 150 == 0:
-                sample_and_plot_batch_ddim_aleatoric(
+                sample_and_plot_batch_ddim_aleatoric_v2(
                     diffusion_model=diffusion,
                     autoencoder=autoencoder,
+                    uncertainty_decoder=uncertainty_decoder,
                     condition_batch=img_A_latent,
                     gt_batch=img_B_latent,
                     writer=writer,
@@ -414,5 +626,7 @@ if __name__ == '__main__':
         if epoch % 50 == 0:
             # Save the model after each epoch.
             torch.save(diffusion.state_dict(), os.path.join(experiment_dir, f'diffusion-ep-{epoch + args.epoch_start}.pth'))
+            if args.uncertainty_calibration:
+                torch.save(diffusion.state_dict(), os.path.join(experiment_dir, f'uncertainty_decoder-ep-{epoch + args.epoch_start}.pth'))
 
     print("Training complete.")

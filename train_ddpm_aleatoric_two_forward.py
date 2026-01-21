@@ -314,6 +314,7 @@ if __name__ == '__main__':
     parser.add_argument('--context_ckpt', default=None, type=str)
     parser.add_argument('--experiment_name', required=True, type=str)
     parser.add_argument('--task', required=True, type=str)
+    parser.add_argument('--backbone', default="UNet", type=str)
     parser.add_argument('--annotation_A', required=False, type=str)
     parser.add_argument('--annotation_B', required=False, type=str)
     parser.add_argument('--num_workers', default=8, type=int)
@@ -394,9 +395,15 @@ if __name__ == '__main__':
     # ----------------------------------------------
     # ✅ Load diffusion model
     # ----------------------------------------------
-    diffusion = networks.init_ddpm_aleatoric_two_forward(args.in_ch, args.out_ch, args.diff_ckpt).to(DEVICE)
+    if args.backbone == "UNet":
+        diffusion = networks.init_ddpm_aleatoric_two_forward(args.in_ch, args.out_ch, args.diff_ckpt).to(DEVICE)
+        spatial_encoder = networks.init_spatial_context_encoder(channels=args.spatial_enc_channels, cross_attention_dim=128, checkpoints_path=args.context_ckpt).to(DEVICE)
+
+    elif args.backbone == "UViT":
+        diffusion = networks.init_uvit_double_output_and_context(img_size=256, in_ch=args.in_ch, out_ch=args.out_ch, checkpoints_path=args.diff_ckpt).to(DEVICE)
+        spatial_encoder = networks.init_spatial_context_encoder_UViT(channels=args.spatial_enc_channels, cross_attention_dim=128, checkpoints_path=args.context_ckpt).to(DEVICE)
+
     print(diffusion)
-    spatial_encoder = networks.init_spatial_context_encoder(channels=args.spatial_enc_channels, cross_attention_dim=128, checkpoints_path=args.context_ckpt).to(DEVICE)
 
     if NUM_GPUS > 1:
         print(f"Using {NUM_GPUS} GPUs")

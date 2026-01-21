@@ -12,7 +12,7 @@ from generative.networks.nets import (
     ControlNet
 )
 from .my_unet import DiffusionModelUNetAleatoricConcat, DiffusionUNetWithUncertainty
-from .UViT import UViTBase, UViTContext
+from .UViT import UViTBase, UViTDoubleOutput, UViTDoubleOutputAndContext
 """
 def load_if(checkpoints_path: Optional[str], network: nn.Module) -> nn.Module:
     
@@ -136,7 +136,75 @@ def init_uvit_base(
 
     return load_if(checkpoints_path, model)
 
+def init_uvit_double_output(
+    img_size: int,
+    in_ch: int,
+    out_ch: int,
+    patch_size: int = 16,
+    embed_dim: int = 768,
+    depth: int = 12,
+    num_heads: int = 12,
+    mlp_ratio: float = 4.0,
+    checkpoints_path: Optional[str] = None,
+) -> nn.Module:
+    """
+     UViT Double Output for uncertianty modeling
+    """
 
+    model = UViTDoubleOutput(
+        img_size=img_size,
+        patch_size=patch_size,
+        in_chans=in_ch,               # e.g. noisy target + conditioning image
+        out_chans=out_ch,
+        embed_dim=embed_dim,
+        depth=depth,
+        num_heads=num_heads,
+        mlp_ratio=mlp_ratio,
+        qkv_bias=True,
+        norm_layer=nn.LayerNorm,
+        mlp_time_embed=True,          # standard for diffusion / flow
+        num_classes=-1,               # disables label conditioning
+        use_checkpoint=False,
+        conv=True,
+        skip=True,
+    )
+
+    return load_if(checkpoints_path, model)
+
+def init_uvit_double_output_and_context(
+    img_size: int,
+    in_ch: int,
+    out_ch: int,
+    patch_size: int = 16,
+    embed_dim: int = 768,
+    depth: int = 12,
+    num_heads: int = 12,
+    mlp_ratio: float = 4.0,
+    checkpoints_path: Optional[str] = None,
+) -> nn.Module:
+    """
+     UViT Double Output for uncertianty modeling
+    """
+
+    model = UViTDoubleOutputAndContext(
+        img_size=img_size,
+        patch_size=patch_size,
+        in_chans=in_ch,               # e.g. noisy target + conditioning image
+        out_chans=out_ch,
+        embed_dim=embed_dim,
+        depth=depth,
+        num_heads=num_heads,
+        mlp_ratio=mlp_ratio,
+        qkv_bias=True,
+        norm_layer=nn.LayerNorm,
+        mlp_time_embed=True,          # standard for diffusion / flow
+        clip_dim=768,
+        num_clip_token=77,
+        conv=True,
+        skip=True,
+    )
+
+    return load_if(checkpoints_path, model)
 
 def init_ddpm_aleatoric(input_ch: int, out_ch: int, checkpoints_path: Optional[str] = None) -> nn.Module:
     ddpm = DiffusionModelUNetAleatoricConcat(
@@ -396,11 +464,107 @@ class SpatialContextEncoder(nn.Module):
         out = self.encoder(x)       # (N, cross_attention_dim)
         return out.unsqueeze(1)    # Motivation: convert to sequence format for attention (1 token per sample)
 
-
 def init_spatial_context_encoder(channels, cross_attention_dim, checkpoints_path: Optional[str] = None) -> nn.Module:
     spatial_encoder = SpatialContextEncoder(in_channels=channels, cross_attention_dim=cross_attention_dim)
     return load_if(checkpoints_path, spatial_encoder)
 
+
+class SpatialContextEncoderUviT(nn.Module):
+    """
+    Encodes a spatial 2D map (e.g., uncertainty map) into:
+      - a global context vector for UNet-style cross-attention: (B, 1, cross_attention_dim)
+      - optional CLIP-like tokens for UViT: (B, num_tokens, clip_dim) via `to_uvit_context`.
+    """
+
+    def __init__(
+        self,
+        in_channels: int,
+        cross_attention_dim: int,
+        # UViT / CLIP adapter parameters
+        uvit_clip_dim: int = 768,
+        uvit_num_tokens: int = 77,
+    ):
+        super().__init__()
+        self.cross_attention_dim = cross_attention_dim
+        self.enable_uvit_adapter = enable_uvit_adapter
+        self.uvit_clip_dim = uvit_clip_dim
+        self.uvit_num_tokens = uvit_num_tokens
+
+        # Core spatial encoder (for UNet-style context)
+        self.encoder = nn.Sequential(
+            nn.Conv2d(in_channels, 32, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool2d((4, 4)),
+            nn.Flatten(),
+            nn.Linear(32 * 4 * 4, 128),
+            nn.ReLU(),
+            nn.Linear(128, cross_attention_dim),
+        )
+
+        # Optional adapter to UViT CLIP-like tokens
+        # if enable_uvit_adapter:
+        self.uvit_proj = nn.Linear(cross_attention_dim, uvit_clip_dim)
+
+        self._init_weights()
+
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
+                init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+                if m.bias is not None:
+                    init.constant_(m.bias, 0)
+
+    # def forward(self, x: torch.Tensor) -> torch.Tensor:
+    #    """
+    #    UNet-style context.
+
+    #    Args:
+    #        x: (B, C, H, W)
+
+    #    Returns:
+    #        context: (B, 1, cross_attention_dim)
+    #    """
+    #    out = self.encoder(x)          # (B, cross_attention_dim)
+    #    return out.unsqueeze(1)        # (B, 1, cross_attention_dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        UViT-style CLIP tokens.
+
+        Args:
+            x: (B, C, H, W)
+
+        Returns:
+            uvit_context: (B, uvit_num_tokens, uvit_clip_dim)
+        """
+        assert self.enable_uvit_adapter, "UViT adapter is disabled for this encoder."
+
+        # First get UNet-style context: (B, 1, cross_attention_dim)
+        base_context = self.forward(x)              # (B, 1, D)
+        B, L, D = base_context.shape                # L = 1, D = cross_attention_dim
+
+        # Project feature dim: D -> uvit_clip_dim (e.g. 128 -> 768)
+        context = self.uvit_proj(base_context)      # (B, 1, uvit_clip_dim)
+
+        # If already correct number of tokens, just return
+        if L == self.uvit_num_tokens:
+            return context
+
+        # Interpolate along token axis: 1 -> uvit_num_tokens
+        context_t = context.transpose(1, 2)         # (B, uvit_clip_dim, L)
+        context_t = F.interpolate(
+            context_t,
+            size=self.uvit_num_tokens,
+            mode="linear",
+            align_corners=False,
+        )
+        context = context_t.transpose(1, 2)         # (B, uvit_num_tokens, uvit_clip_dim)
+
+        return context
+
+def init_spatial_context_encoder_UViT(channels, cross_attention_dim, checkpoints_path: Optional[str] = None) -> nn.Module:
+    spatial_encoder = SpatialContextEncoderUviT(in_channels=channels, cross_attention_dim=cross_attention_dim)
+    return load_if(checkpoints_path, spatial_encoder)
 
 class RefinerWithCrossAttention(nn.Module):
     def __init__(self, in_channels=1, context_channels=1):
@@ -582,3 +746,100 @@ class JointFiLMRefiner(nn.Module):
 def init_refiner(checkpoints_path: Optional[str] = None) -> nn.Module:
 	refiner = JointFiLMRefiner()
 	return load_if(checkpoints_path, refiner)
+
+############ Latent Uncertainty Decoder #################
+class LatentUncertaintyDecoder(nn.Module):
+    """
+    Maps latent-space log-variance (B, C_z, H_z, W_z)
+    to image-space log-variance (B, 1, H, W).
+
+    This learns the nonlinear σ_z → σ_x mapping induced by the VAE decoder.
+    """
+
+    def __init__(
+        self,
+        latent_channels: int = 4,
+        base_channels: int = 64,
+        out_channels: int = 1,
+        upsample_factor: int = 4,   # e.g. 256/64 = 4
+    ):
+        super().__init__()
+
+        # --- Feature extractor / remapper (this is the "encoder" you asked about)
+        self.encoder = nn.Sequential(
+            nn.Conv2d(latent_channels, base_channels, 3, padding=1),
+            nn.GroupNorm(8, base_channels),
+            nn.SiLU(),
+
+            nn.Conv2d(base_channels, base_channels, 3, padding=1),
+            nn.GroupNorm(8, base_channels),
+            nn.SiLU(),
+        )
+
+        # --- Progressive upsampling head
+        self.upsampler = nn.ModuleList()
+        ch = base_channels
+        scale = upsample_factor
+
+        while scale > 1:
+            self.upsampler.append(
+                nn.Sequential(
+                    nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False),
+                    nn.Conv2d(ch, ch // 2, 3, padding=1),
+                    nn.GroupNorm(8, ch // 2),
+                    nn.SiLU(),
+                )
+            )
+            ch = ch // 2
+            scale //= 2
+
+        # --- Final projection to log σ_x²
+        self.final = nn.Sequential(
+            nn.Conv2d(ch, ch, 3, padding=1),
+            nn.SiLU(),
+            nn.Conv2d(ch, out_channels, 1),
+        )
+
+        # --- Random initialization of weights
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+                if m.bias is not None:
+                    init.zeros_(m.bias)
+            elif isinstance(m, nn.GroupNorm):
+                if m.weight is not None:
+                    init.ones_(m.weight)
+                if m.bias is not None:
+                    init.zeros_(m.bias)
+
+    def forward(self, logvar_latent: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            logvar_latent: (B, C_z, H_z, W_z)
+
+        Returns:
+            logvar_img: (B, 1, H, W)
+        """
+
+        x = self.encoder(logvar_latent)
+
+        for up in self.upsampler:
+            x = up(x)
+
+        logvar_img = self.final(x)
+        return logvar_img
+
+def init_latent_uncertainty_decoder(
+    checkpoints_path: Optional[str] = None,
+    latent_channels: int = 4,
+    out_channels: int = 1,
+    base_channels: int = 64,
+    upsample_factor: int = 4,
+) -> nn.Module:
+    decoder = LatentUncertaintyDecoder(
+        latent_channels=latent_channels,
+        base_channels=base_channels,
+        out_channels=out_channels,
+        upsample_factor=upsample_factor,
+    )
+    return load_if(checkpoints_path, decoder)

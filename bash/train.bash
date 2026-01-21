@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #SBATCH -A NAISS2025-5-662 -p alvis
-#SBATCH -N 1 --gpus-per-node=A40:1
-#SBATCH -t 4-00:00:00
+#SBATCH -C NOGPU
+#SBATCH -t 0-00:40:00
 # Output files
 #SBATCH --error=./error/job_%J.err
 #SBATCH --output=./output/out_%J.out
@@ -75,8 +75,10 @@ cd /mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion
 
 
 # python3 ./train_UViT.py --num_workers 8 --batch_size 16 --task "denoising" --experiment_name "UViT_denoising" --in_ch 2 --out_ch 1
-# python3 ./train_ddpm_aleatoric.py --num_workers 8 --batch_size 16 --experiment_name "ddpm_CTPET_aleatoric"  --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/FDG-PEt_CT-lesion/lung_slices" --phase train --slice_range 0 10000 --mri_modalities CT PET --under_sample_dataset
+# python3 ./train_ddpm_aleatoric.py --num_workers 8 --batch_size 16 --experiment_name "UViT_CTPET_aleatoric"  --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/FDG-PEt_CT-lesion/lung_slices" --phase train --slice_range 0 10000 --mri_modalities CT PET --under_sample_dataset
 # python3 ./train_ddpm_aleatoric_two_forward.py --num_workers 8 --experiment_name "ddpm_CTPET_aleatoric_two_forward"  --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/FDG-PEt_CT-lesion/lung_slices" --phase train --slice_range 0 10000 --mri_modalities CT PET --under_sample_dataset --diff_ckpt "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/ddpm_CTPET_aleatoric_two_forward/diffusion-ep-100.pth" --context_ckpt "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/ddpm_CTPET_aleatoric_two_forward/spatial_encoder-ep-100.pth"
+
+# python3 ./train_ddpm_aleatoric.py --num_workers 8 --batch_size 16 --backbone "UViT" --task "denoising" --experiment_name "UViT_denoising_aleatoric" -in_ch 2 --out_ch 1
 
 
 
@@ -86,7 +88,7 @@ cd /mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion
 
 # python3 ./train_LDM.py --num_workers 8 --batch_size 16 --task "denoising" --experiment_name "LDM_denoising" --in_ch 6 --out_ch 3 --VAE_ckpt "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/VAE_Denoising"
 # python3 ./train_LDM_aleatoric.py --num_workers 8 --batch_size 16 --task "denoising" --experiment_name "LDM_aleatoric_denoising" --in_ch 6 --out_ch 3 --VAE_ckpt "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/VAE_Denoising"
-python3 ./train_LDM_aleatoric_two_forward.py --num_workers 8 --batch_size 16 --in_ch 6 --out_ch 3 --task "denoising" --spatial_enc_channels 3 --experiment_name "LDM_aleatoric_two_forward_denoising" --VAE_ckpt "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/VAE_Denoising"
+# python3 ./train_LDM_aleatoric_two_forward.py --num_workers 8 --batch_size 16 --in_ch 6 --out_ch 3 --task "denoising" --spatial_enc_channels 3 --experiment_name "LDM_aleatoric_two_forward_denoising" --VAE_ckpt "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/VAE_Denoising"
 
 
-# python3 ./utils/prepare_dataset.py
+python3 ./utils/prepare_dataset.py

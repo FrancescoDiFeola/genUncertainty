@@ -243,93 +243,6 @@ class PatchEmbed(nn.Module):
         return x
 
 
-class UViTContext(nn.Module):
-    def __init__(self, img_size=224, patch_size=16, in_chans=3, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4.,
-                 qkv_bias=False, qk_scale=None, norm_layer=nn.LayerNorm, mlp_time_embed=False, use_checkpoint=False,
-                 clip_dim=768, num_clip_token=77, conv=True, skip=True):
-        super().__init__()
-        self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
-        self.in_chans = in_chans
-
-        self.patch_embed = PatchEmbed(patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim)
-        num_patches = (img_size // patch_size) ** 2
-
-        self.time_embed = nn.Sequential(
-            nn.Linear(embed_dim, 4 * embed_dim),
-            nn.SiLU(),
-            nn.Linear(4 * embed_dim, embed_dim),
-        ) if mlp_time_embed else nn.Identity()
-
-        self.context_embed = nn.Linear(clip_dim, embed_dim)
-
-        self.extras = 1 + num_clip_token
-
-        self.pos_embed = nn.Parameter(torch.zeros(1, self.extras + num_patches, embed_dim))
-
-        self.in_blocks = nn.ModuleList([
-            Block(
-                dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
-                norm_layer=norm_layer, use_checkpoint=use_checkpoint)
-            for _ in range(depth // 2)])
-
-        self.mid_block = Block(
-                dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
-                norm_layer=norm_layer, use_checkpoint=use_checkpoint)
-
-        self.out_blocks = nn.ModuleList([
-            Block(
-                dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
-                norm_layer=norm_layer, skip=skip, use_checkpoint=use_checkpoint)
-            for _ in range(depth // 2)])
-
-        self.norm = norm_layer(embed_dim)
-        self.patch_dim = patch_size ** 2 * in_chans
-        self.decoder_pred = nn.Linear(embed_dim, self.patch_dim, bias=True)
-        self.final_layer = nn.Conv2d(self.in_chans, self.in_chans, 3, padding=1) if conv else nn.Identity()
-
-        trunc_normal_(self.pos_embed, std=.02)
-        self.apply(self._init_weights)
-
-    def _init_weights(self, m):
-        if isinstance(m, nn.Linear):
-            trunc_normal_(m.weight, std=.02)
-            if isinstance(m, nn.Linear) and m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.LayerNorm):
-            nn.init.constant_(m.bias, 0)
-            nn.init.constant_(m.weight, 1.0)
-
-    @torch.jit.ignore
-    def no_weight_decay(self):
-        return {'pos_embed'}
-
-    def forward(self, x, timesteps, context):
-        x = self.patch_embed(x)
-        B, L, D = x.shape
-
-        time_token = self.time_embed(timestep_embedding(timesteps, self.embed_dim))
-        time_token = time_token.unsqueeze(dim=1)
-        context_token = self.context_embed(context)
-        x = torch.cat((time_token, context_token, x), dim=1)
-        x = x + self.pos_embed
-
-        skips = []
-        for blk in self.in_blocks:
-            x = blk(x)
-            skips.append(x)
-
-        x = self.mid_block(x)
-
-        for blk in self.out_blocks:
-            x = blk(x, skips.pop())
-
-        x = self.norm(x)
-        x = self.decoder_pred(x)
-        assert x.size(1) == self.extras + L
-        x = x[:, self.extras:, :]
-        x = unpatchify(x, self.in_chans)
-        x = self.final_layer(x)
-        return x
 
 class UViTBase(nn.Module):
     def __init__(self, img_size=224, patch_size=16, in_chans=3, out_chans=3, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4.,
@@ -423,3 +336,197 @@ class UViTBase(nn.Module):
         x = unpatchify(x, self.out_chans)
         x = self.final_layer(x)
         return x
+
+# with aleatoric head
+class UViTDoubleOutput(nn.Module):
+    def __init__(self, img_size=224, patch_size=16, in_chans=3, out_chans=3, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4.,
+                 qkv_bias=False, qk_scale=None, norm_layer=nn.LayerNorm, mlp_time_embed=False, num_classes=-1,
+                 use_checkpoint=False, conv=True, skip=True):
+        super().__init__()
+        self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
+        self.num_classes = num_classes
+        self.in_chans = in_chans
+        # Added to distinguish input and output channels
+        self.out_chans = out_chans
+
+        self.patch_embed = PatchEmbed(patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim)
+        num_patches = (img_size // patch_size) ** 2
+
+        self.time_embed = nn.Sequential(
+            nn.Linear(embed_dim, 4 * embed_dim),
+            nn.SiLU(),
+            nn.Linear(4 * embed_dim, embed_dim),
+        ) if mlp_time_embed else nn.Identity()
+
+        if self.num_classes > 0:
+            self.label_emb = nn.Embedding(self.num_classes, embed_dim)
+            self.extras = 2
+        else:
+            self.extras = 1
+
+        self.pos_embed = nn.Parameter(torch.zeros(1, self.extras + num_patches, embed_dim))
+
+        self.in_blocks = nn.ModuleList([
+            Block(
+                dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                norm_layer=norm_layer, use_checkpoint=use_checkpoint)
+            for _ in range(depth // 2)])
+
+        self.mid_block = Block(
+                dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                norm_layer=norm_layer, use_checkpoint=use_checkpoint)
+
+        self.out_blocks = nn.ModuleList([
+            Block(
+                dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                norm_layer=norm_layer, skip=skip, use_checkpoint=use_checkpoint)
+            for _ in range(depth // 2)])
+
+        self.norm = norm_layer(embed_dim)
+        self.patch_dim = patch_size ** 2 * out_chans  # patch_size ** 2 * in_chans
+        self.decoder_pred = nn.Linear(embed_dim, self.patch_dim, bias=True)
+        self.final_layer = nn.Conv2d(self.out_chans, self.out_chans*2, 3, padding=1) if conv else nn.Identity()
+
+        trunc_normal_(self.pos_embed, std=.02)
+        self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=.02)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return {'pos_embed'}
+
+    def forward(self, x, timesteps, context=None):
+        x = self.patch_embed(x)
+        B, L, D = x.shape
+
+        time_token = self.time_embed(timestep_embedding(timesteps, self.embed_dim))
+        time_token = time_token.unsqueeze(dim=1)
+        x = torch.cat((time_token, x), dim=1)
+
+        x = x + self.pos_embed
+
+        skips = []
+        for blk in self.in_blocks:
+            x = blk(x)
+            skips.append(x)
+
+        x = self.mid_block(x)
+
+        for blk in self.out_blocks:
+            x = blk(x, skips.pop())
+
+        x = self.norm(x)
+        x = self.decoder_pred(x)
+        assert x.size(1) == self.extras + L
+        x = x[:, self.extras:, :]
+        x = unpatchify(x, self.out_chans)
+        x = self.final_layer(x)
+
+        # Split output into predicted noise (mean) and predicted log variance
+        pred_mean, pred_logvar = torch.chunk(x, 2, dim=1)
+
+        return (pred_mean, pred_logvar)
+
+# aleatoric head + context conditioning (used for self refinement)
+class UViTDoubleOutputAndContext(nn.Module):
+    def __init__(self, img_size=224, patch_size=16, in_chans=3, out_chans=3, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4.,
+                 qkv_bias=False, qk_scale=None, norm_layer=nn.LayerNorm, mlp_time_embed=False, use_checkpoint=False,
+                 clip_dim=768, num_clip_token=77, conv=True, skip=True):
+
+        super().__init__()
+        self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
+        self.in_chans = in_chans
+        # Added to distinguish input and output channels
+        self.out_chans = out_chans
+
+        self.patch_embed = PatchEmbed(patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim)
+        num_patches = (img_size // patch_size) ** 2
+
+        self.time_embed = nn.Sequential(
+            nn.Linear(embed_dim, 4 * embed_dim),
+            nn.SiLU(),
+            nn.Linear(4 * embed_dim, embed_dim),
+        ) if mlp_time_embed else nn.Identity()
+
+        self.context_embed = nn.Linear(clip_dim, embed_dim)
+
+        self.extras = 1 + num_clip_token
+
+        self.pos_embed = nn.Parameter(torch.zeros(1, self.extras + num_patches, embed_dim))
+
+        self.in_blocks = nn.ModuleList([
+            Block(
+                dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                norm_layer=norm_layer, use_checkpoint=use_checkpoint)
+            for _ in range(depth // 2)])
+
+        self.mid_block = Block(
+                dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                norm_layer=norm_layer, use_checkpoint=use_checkpoint)
+
+        self.out_blocks = nn.ModuleList([
+            Block(
+                dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                norm_layer=norm_layer, skip=skip, use_checkpoint=use_checkpoint)
+            for _ in range(depth // 2)])
+
+        self.norm = norm_layer(embed_dim)
+        self.patch_dim = patch_size ** 2 * out_chans
+        self.decoder_pred = nn.Linear(embed_dim, self.patch_dim, bias=True)
+        self.final_layer = nn.Conv2d(self.out_chans, self.out_chans*2, 3, padding=1) if conv else nn.Identity()
+
+        trunc_normal_(self.pos_embed, std=.02)
+        self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=.02)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return {'pos_embed'}
+
+    def forward(self, x, timesteps, context):
+        x = self.patch_embed(x)
+        B, L, D = x.shape
+
+        time_token = self.time_embed(timestep_embedding(timesteps, self.embed_dim))
+        time_token = time_token.unsqueeze(dim=1)
+        context_token = self.context_embed(context)
+        x = torch.cat((time_token, context_token, x), dim=1)
+        x = x + self.pos_embed
+
+        skips = []
+        for blk in self.in_blocks:
+            x = blk(x)
+            skips.append(x)
+
+        x = self.mid_block(x)
+
+        for blk in self.out_blocks:
+            x = blk(x, skips.pop())
+
+        x = self.norm(x)
+        x = self.decoder_pred(x)
+        assert x.size(1) == self.extras + L
+        x = x[:, self.extras:, :]
+        x = unpatchify(x, self.out_chans)
+        x = self.final_layer(x)
+
+        # Split output into predicted noise (mean) and predicted log variance
+        pred_mean, pred_logvar = torch.chunk(x, 2, dim=1)
+
+        return (pred_mean, pred_logvar)

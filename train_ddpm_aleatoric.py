@@ -190,6 +190,7 @@ if __name__ == '__main__':
     parser.add_argument('--dataset_csv', required=False, type=str)
     parser.add_argument('--output_dir', default="/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/", type=str)
     parser.add_argument('--diff_ckpt', default=None, type=str)
+    parser.add_argument('--backbone', default="UNet", type=str)
     parser.add_argument('--experiment_name', required=True, type=str)
     parser.add_argument('--task', required=True, type=str)
     parser.add_argument('--annotation_A', required=False, type=str)
@@ -271,7 +272,14 @@ if __name__ == '__main__':
     # -----------------------
     # ✅ Load diffusion model
     # -----------------------
-    diffusion = networks.init_ddpm_aleatoric(args.in_ch, args.out_ch, args.diff_ckpt).to(DEVICE)
+    if args.backbone == "UNet":
+        diffusion = networks.init_ddpm_aleatoric(args.in_ch, args.out_ch, args.diff_ckpt).to(DEVICE)
+        print("-----Initialization Diffusion UNet-----------")
+
+    elif args.backbone == "UViT":
+        diffusion = networks.init_uvit_double_output(img_size=256, in_ch=args.in_ch, out_ch=args.out_ch, checkpoints_path=args.diff_ckpt).to(DEVICE)
+        print("-----Initialization UViT-----------")
+
     print(diffusion)
     if NUM_GPUS > 1:
         print(f"Using {NUM_GPUS} GPUs")
@@ -347,11 +355,11 @@ if __name__ == '__main__':
             progress_bar.set_postfix({"loss": epoch_loss / (step + 1)})
 
             torch.cuda.empty_cache()
-            if step % 500 == 0:
+            if step % 150 == 0:
                 sample_and_plot_batch_ddim_aleatoric(
                     diffusion_model=diffusion,
-                    condition_batch=img_A,
-                    gt_batch=img_B,
+                    condition_batch=img_A[8],
+                    gt_batch=img_B[8],
                     writer=writer,
                     step=step,
                     device=DEVICE,
