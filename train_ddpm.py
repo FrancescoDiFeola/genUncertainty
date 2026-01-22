@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 from torch.cuda.amp import autocast, GradScaler
 # from torch.utils.data import DataLoader
-from monai.data import DataLoader
+from monai.data import DataLoader, CacheDataset, DataLoader
 from torchvision import transforms
 from monai.utils import set_determinism
 from generative.networks.schedulers import DDPMScheduler
@@ -22,6 +22,17 @@ from src import CTPETDataset
 from src import CityscapesColorDataset
 from src import Mri2DSlicedataset
 from src import PairedImageDataset
+from src.brlp.MR_to_CT import build_paired_list
+from monai.transforms import (
+    Compose,
+    LoadImaged,
+    EnsureChannelFirstd,
+    ScaleIntensityRanged,
+    NormalizeIntensityd,
+    RandFlipd,
+    RandAffined,
+    EnsureTyped,
+)
 # -----------------------
 # ✅ Set environment
 # -----------------------
@@ -245,7 +256,43 @@ if __name__ == '__main__':
             annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_FULLDOSE.csv',
         )
 
-    
+    elif args.task == "MRtoCT":
+        train_root = "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/Task1/pelvis/train"
+
+        train_data = build_paired_list(train_root)
+
+        MR_CT_transforms = Compose([
+            # --- Load npy files ---
+            LoadImaged(keys=["mr", "ct"], reader="numpyreader"),
+            EnsureChannelFirstd(keys=["mr", "ct"]),  # [1, H, W]
+
+            # --- CT: HU window → [-1, 1] ---
+            ScaleIntensityRanged(
+                keys=["ct"],
+                a_min=-1000,
+                a_max=1000,
+                b_min=-1.0,
+                b_max=1.0,
+                clip=True,
+            ),
+
+            # --- MRI: per-slice z-score ---
+            NormalizeIntensityd(
+                keys=["mr"],
+                nonzero=True,
+                channel_wise=True,
+            ),
+
+            EnsureTyped(keys=["mr", "ct"]),
+        ])
+
+        dataset = CacheDataset(
+            data=train_data,
+            transform=MR_CT_transforms,
+            cache_rate=0.8,  # adjust to your RAM
+            num_workers=4,
+        )
+
     train_loader = DataLoader(dataset=dataset,
                               batch_size=args.batch_size,
                               shuffle=True,

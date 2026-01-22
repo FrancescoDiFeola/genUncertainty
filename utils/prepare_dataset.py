@@ -40,13 +40,13 @@ for subject in tqdm(subjects):
 
 
 
-"""
+
 import numpy as np
 import matplotlib.pyplot as plt
 
 # Paths to your .npy files
-mr_path = "/Users/francescodifeola/Desktop/1PC098/mr_050.npy"
-ct_path = "/Users/francescodifeola/Desktop/1PC098/ct_050.npy"
+mr_path = "/Users/francescodifeola/Desktop/data/mr_091.npy"
+ct_path = "/Users/francescodifeola/Desktop/data/ct_091.npy"
 
 # Load arrays
 mr = np.load(mr_path)
@@ -69,4 +69,3 @@ axes[1].axis("off")
 
 plt.tight_layout()
 plt.show()
-"""

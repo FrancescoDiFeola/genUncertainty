@@ -5,7 +5,7 @@ import os
 class TrainOptions:
     def __init__(self):
 
-        self.dataroot = '/mimer/NOBACKUP/groups/naiss2023-6-336/lcarusone/TESI_MAGISTRALE/dataset/patches_train'
+        self.dataroot = "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/FDG-PEt_CT-lesion/lung_slices"
 
 
         # Training settings
@@ -29,3 +29,11 @@ class TrainOptions:
         self.gradient_accumulation_steps = 2 if self.batchSize < 2 else 1  # Fix tuple issue
 
         #self.use_cache = True
+        self.task="CTPET"
+
+
+        # Dataset parameters (CT/PET)
+        self.slice_range = [0, 10000]
+        self.modalities = ['CT', 'PET']
+        self.under_sample_dataset = True
+

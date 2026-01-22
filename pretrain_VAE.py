@@ -18,7 +18,11 @@ from sklearn.manifold import TSNE
 import matplotlib.pyplot as plt
 import numpy as np
 from src.VAE.utils.losses import VAE_Losses
+from monai.data import DataLoader, CacheDataset, DataLoader
 from src.VAE.utils.checkpoints_utils import save_checkpoint, load_checkpoint
+from src.VAE.data.dataset_MRtoCT import MRCTSingleImageDataset
+from src.VAE.data.dataset_T1T2 import T1T2Dataset
+from src.VAE.data.dataset_CTPET import CTPETDataset
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -254,9 +258,20 @@ def train_autoencoder(opt):
     # Load Dataset
 
     print("[INFO] Loading dataset...")
-    dataset = LDCTHDCTDataset(
-        annotation='/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/src/VAE/csvs/Mayo_total_stacked_shuffled.csv',
-    )
+
+    if opt.task == "denoising":
+        dataset = LDCTHDCTDataset(
+            annotation='/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/src/VAE/csvs/Mayo_total_stacked_shuffled.csv',
+        )
+
+    elif opt.task == "MRtoCT":
+        dataset = MRCTSingleImageDataset(csv_path="/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/mr_ct_dataset_train.csv")
+
+    elif opt.task == "T1T2":
+        dataset = T1T2Dataset("/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/src/VAE/csvs/T1T2_train.csv")
+
+    elif opt.task == "CTPET":
+        dataset = CTPETDataset(opt)
 
     train_loader = DataLoader(dataset=dataset,
                               batch_size=opt.batchSize,
@@ -345,7 +360,7 @@ def train_autoencoder(opt):
     #avgloss = utils.AverageLoss()
     #total_counter = 0  # print(f"TensorBoard logging directory: {writer.log_dir}")
     #checkpoint_dir = "/mimer/NOBACKUP/groups/naiss2023-6-336/lcarusone/TESI_MAGISTRALE/src/VAE/checkpoints"
-    checkpoint_dir = "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/VAE_Denoising"
+    checkpoint_dir = "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/CTPET/VAE"
 
 
     # **Load Checkpoints from checkpoint.py**
@@ -376,7 +391,8 @@ def train_autoencoder(opt):
             # Free unused memory before processing a new batch
             #torch.cuda.empty_cache()
             #gc.collect()
-            image = batch['A'].to(device)
+
+            image = batch['img'].to(device)
 
             # img_ct = torch.empty(1, 1, 200, 200, 200).to(device)
             # img_pet = torch.empty(1, 1, 150, 150, 150).to(device)
@@ -466,8 +482,6 @@ def train_autoencoder(opt):
                 plot_reconstruction(image, reconstruction, epoch + 1, checkpoint_dir)
             else:
                 print(f"[WARNING] Skipping reconstruction plot at epoch {epoch + 1} due to NaNs in reconstruction.")
-
-
 
         print(
             f"Epoch [{epoch + 1}/{opt.n_epochs}], Recon : {avg_loss['recon']:.6f}, KL Loss: {avg_loss['kl']:.6f}, Perceptual Loss: {avg_loss['perceptual']:.6f}, Adv Loss: {avg_loss['adv']:.6f}")

@@ -264,20 +264,13 @@ def sample_and_plot_batch_ddim_aleatoric_v2(
         uncertainty = pred_logvar
 
     pred_denoised_latent = x
-    uncertainty = uncertainty_decoder(uncertainty)
-    uncertainty_map_latent = torch.exp(uncertainty)
+    uncertainty = torch.clamp(uncertainty, -10.0, 10.0)
+    uncertainty = uncertainty_decoder(uncertainty.float())
+    uncertainty_map = torch.exp(uncertainty)
 
     pred_denoised = autoencoder.decode(pred_denoised_latent/scaling)
     gt_batch = autoencoder.decode(gt_batch/scaling)
     condition_batch = autoencoder.decode(condition_batch/scaling)
-
-    # Upsample to match decoded resolution
-    uncertainty_map = F.interpolate(
-        uncertainty_map_latent,
-        size=pred_denoised.shape[-2:],  # (H, W) of decoded image
-        mode="bilinear",
-        align_corners=False,
-    )
 
     # ---- Plotting ---- #
     def norm(x):
@@ -371,7 +364,7 @@ if __name__ == '__main__':
     parser.add_argument('--output_dir', default="/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/", type=str)
     parser.add_argument('--diff_ckpt', default=None, type=str)
     parser.add_argument('--VAE_ckpt', default=None, type=str)
-    parser.add_argument('--unc_ckpt', default=None, type=str)
+    parser.add_argument('--unc_decoder_ckpt', default=None, type=str)
     parser.add_argument('--experiment_name', required=True, type=str)
     parser.add_argument('--task', required=True, type=str)
     parser.add_argument('--annotation_A', required=False, type=str)
@@ -382,6 +375,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr', default=1.5e-5, type=float)
     parser.add_argument('--epoch_start', default=0, type=float)
     parser.add_argument('--diff_loss_weight', type=float, default=1.0)
+    parser.add_argument('--uncertainty_loss_weight', type=float, default=0.01)
     parser.add_argument('--in_ch', default=2, type=int)
     parser.add_argument('--out_ch', default=1, type=int)
     parser.add_argument('--uncertainty_calibration', action='store_true', help='enable uncertainty calibration')
@@ -394,12 +388,14 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    experiment_dir = os.path.join(args.output_dir, args.experiment_name)
+
+    experiment_dir = os.path.join(f"{args.output_dir}/{args.task}", args.experiment_name)
     os.makedirs(experiment_dir, exist_ok=True)
 
     # -----------------------
     # ✅ Load dataset
     # -----------------------
+
     scaling_factor = 1
     # Load the LDCT/HDCT dataset
     if args.task == "T1T2":
@@ -560,12 +556,12 @@ if __name__ == '__main__':
                 # (B) OPTIONAL: image-space uncertainty calibration
                 # -------------------------------------------------
                 if args.uncertainty_calibration:
-
+                    x_t, _= torch.split(noisy_latent, 3, dim=1)
                     # 1) Build x0_hat from epsilon prediction (MONAI-compatible)
-                    alphas_cumprod = scheduler.alphas_cumprod.to(noisy_latent.device)
+                    alphas_cumprod = scheduler.alphas_cumprod.to(x_t.device)
                     a_t = alphas_cumprod[timesteps].reshape(-1, 1, 1, 1)
 
-                    x0_hat = (noisy_latent - torch.sqrt(1.0 - a_t) * pred_mean_var[0]) / (torch.sqrt(a_t) + 1e-8)
+                    x0_hat = (x_t - torch.sqrt(1.0 - a_t) * pred_mean_var[0]) / (torch.sqrt(a_t) + 1e-8)
 
                     # IMPORTANT: block gradients to mean head through x0_hat
                     x0_hat = x0_hat.detach()
@@ -577,9 +573,11 @@ if __name__ == '__main__':
                     # 3) Target error map (this is a target so it should be detached)
                     err_img = (img_B - x0_hat_img).abs().mean(dim=1, keepdim=True).detach()
 
+                    logvar_latent = torch.clamp(pred_mean_var[1], -10.0, 10.0)
+
                     # 4) Predicted image uncertainty from latent logvar
                     pred_u_img = uncertainty_decoder(
-                        pred_mean_var[1]  # DO NOT detach
+                        logvar_latent.float()  # DO NOT detach
                     )
 
                     loss_unc = args.uncertainty_loss_weight * uncertainty_calibration_loss(

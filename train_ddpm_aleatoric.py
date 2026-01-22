@@ -8,18 +8,17 @@ from monai.utils import set_determinism
 from torchvision import transforms
 from generative.networks.schedulers import DDPMScheduler
 from tqdm import tqdm
-from src import LDCTHDCTAutoKLDataset
-from src import LDCTHDCTDataset
-from src import networks
+# from src.brlp. import LDCTHDCTAutoKLDataset
+from src.brlp import networks
 from inferers import DiffusionInferer
 import numpy as np
 import matplotlib.pyplot as plt
 from generative.networks.schedulers import DDIMScheduler
-from src import T1T2Dataset
-from src import CTPETDataset
-from src import Mri2DSlicedataset
-from src import CityscapesColorDataset
-from src import PairedImageDataset
+from src.brlp.T1_T2_dataset import T1T2Dataset
+from src.brlp.Mri2DSlice_dataset import Mri2DSlicedataset
+from src.brlp.CS_dataset import CityscapesColorDataset
+from src.brlp.ND_dataset import PairedImageDataset
+from src.brlp.ldct_hdct_dataset import LDCTHDCTDataset
 # -----------------------
 # ✅ Set environment
 # -----------------------
@@ -212,8 +211,7 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-
-    experiment_dir = os.path.join(args.output_dir, args.experiment_name)
+    experiment_dir = os.path.join(args.output_dir, args.task, args.experiment_name)
     os.makedirs(experiment_dir, exist_ok=True)
     # -----------------------
     # ✅ Load dataset
