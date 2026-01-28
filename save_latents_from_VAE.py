@@ -15,6 +15,7 @@ from src.brlp.Mri2DSlice_dataset import Mri2DSlicedataset
 from src.brlp.CS_dataset import CityscapesColorDataset
 from src.brlp.ND_dataset import PairedImageDataset
 from src.VAE.data.dataset_Denoising import LDCTHDCTDataset
+from src.VAE.data.dataset_T1T2 import T1T2Dataset
 
 # --- CONFIGURAZIONE ---
 # INPUT_ROOT = "/mimer/NOBACKUP/groups/naiss2023-6-336/lcarusone/TESI_MAGISTRALE/dataset/patches_test/images"
@@ -85,16 +86,20 @@ autoencoder = AutoencoderKL(
 )
 autoencoder = autoencoder.to(DEVICE)
 
-checkpoint_dir = "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/VAE_Denoising/"
+checkpoint_dir = "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/T1T2/VAE"
 _ = load_checkpoint(autoencoder, optimizer=None, checkpoint_dir=checkpoint_dir, model_name="autoencoder")
 autoencoder.eval()
 
 # --- 3. LOOP OTTIMIZZATO (FLOAT32 + FIX SHAPE) ---
 if __name__ == "__main__":
 
+    """
     dataset = LDCTHDCTDataset(
         annotation='/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/src/VAE/csvs/Mayo_total_stacked_shuffled.csv',
     )
+    """
+
+    dataset = T1T2Dataset("/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/src/VAE/csvs/T1T2_train.csv")
 
     loader = DataLoader(
         dataset,
@@ -112,7 +117,7 @@ if __name__ == "__main__":
     with torch.no_grad():
         for batch in tqdm(loader):
 
-            inputs = batch['A'].to(DEVICE)
+            inputs = batch['img'].to(DEVICE)
             # valid_indices = [i for i, p in enumerate(batch_paths) if p != ""]
             # if not valid_indices:
             #    continue

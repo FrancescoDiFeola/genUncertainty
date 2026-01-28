@@ -8,14 +8,16 @@ from torch.utils.data import DataLoader
 from monai.utils import set_determinism
 from monai.networks.schedulers import RFlowScheduler
 from tqdm import tqdm
-from src import LDCTHDCTDataset
-from src import networks
+from src.brlp import networks
 import matplotlib.pyplot as plt
 from torchvision import transforms
-from src import T1T2Dataset
-from src import Mri2DSlicedataset
-from src import CityscapesColorDataset
-from src import PairedImageDataset
+from src.brlp.T1_T2_dataset import T1T2Dataset
+from src.brlp.CTPET_dataset import CTPETDataset
+from src.brlp.CS_dataset import CityscapesColorDataset
+from src.brlp.Mri2DSlice_dataset import Mri2DSlicedataset
+from src.brlp.ND_dataset import PairedImageDataset
+from src.brlp.ldct_hdct_dataset import LDCTHDCTDataset
+from src.brlp.MR_to_CT import  MRCTPaired
 
 # -----------------------
 # ✅ Set environment
@@ -175,9 +177,16 @@ if __name__ == '__main__':
     parser.add_argument('--in_ch', default=2, type=int)
     parser.add_argument('--out_ch', default=1, type=int)
 
+
+    parser.add_argument('--dataroot', required=False, help='path to images (should have subfolders trainA, trainB, valA, valB, etc)')
+    parser.add_argument('--mri_modalities', default=["t1n", "t1c", "t2w", "t2f"], help='which MRI modality to use', nargs='+', type=str)
+    parser.add_argument('--slice_range', type=int, nargs=2, default=[0, 999],help='Range of slice indices to include, e.g., --slice_range 30 128')
+    parser.add_argument('--phase', type=str, default=None, help='train or test, if None dont split')
+    parser.add_argument('--under_sample_dataset', action="store_true", help='True undersample the dataset deleting one slice every three')
+
     args = parser.parse_args()
 
-    experiment_dir = os.path.join(args.output_dir, args.experiment_name)
+    experiment_dir = os.path.join(f"{args.output_dir}/{args.task}", args.experiment_name)
     os.makedirs(experiment_dir, exist_ok=True)
     print(f"Checkpoint directory: {experiment_dir}")
     # -----------------------
@@ -225,6 +234,13 @@ if __name__ == '__main__':
         dataset = LDCTHDCTDataset(
             annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_LOWDOSE.csv',
             annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_FULLDOSE.csv',
+        )
+
+    elif args.task == "MRtoCT":
+
+        dataset = MRCTPaired(
+            csv_path="/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/mr_ct_dataset_train.csv",
+            output_size=256,
         )
 
     train_loader = DataLoader(dataset=dataset,

@@ -8,7 +8,6 @@ from monai.utils import set_determinism
 from torchvision import transforms
 from generative.networks.schedulers import DDPMScheduler
 from tqdm import tqdm
-# from src.brlp. import LDCTHDCTAutoKLDataset
 from src.brlp import networks
 from inferers import DiffusionInferer
 import numpy as np
@@ -19,6 +18,8 @@ from src.brlp.Mri2DSlice_dataset import Mri2DSlicedataset
 from src.brlp.CS_dataset import CityscapesColorDataset
 from src.brlp.ND_dataset import PairedImageDataset
 from src.brlp.ldct_hdct_dataset import LDCTHDCTDataset
+from src.brlp.MR_to_CT import  MRCTPaired
+
 # -----------------------
 # ✅ Set environment
 # -----------------------
@@ -260,6 +261,13 @@ if __name__ == '__main__':
             annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_FULLDOSE.csv',
         )
 
+    elif args.task == "MRtoCT":
+
+        dataset = MRCTPaired(
+            csv_path= "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/mr_ct_dataset_train.csv",
+            output_size=256,
+        )
+
     train_loader = DataLoader(dataset=dataset,
                               batch_size=args.batch_size,
                               shuffle=True,
@@ -353,11 +361,11 @@ if __name__ == '__main__':
             progress_bar.set_postfix({"loss": epoch_loss / (step + 1)})
 
             torch.cuda.empty_cache()
-            if step % 150 == 0:
+            if step % 500 == 0:
                 sample_and_plot_batch_ddim_aleatoric(
                     diffusion_model=diffusion,
-                    condition_batch=img_A[8],
-                    gt_batch=img_B[8],
+                    condition_batch=img_A,
+                    gt_batch=img_B,
                     writer=writer,
                     step=step,
                     device=DEVICE,

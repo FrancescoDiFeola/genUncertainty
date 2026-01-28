@@ -10,29 +10,19 @@ from torchvision import transforms
 from monai.utils import set_determinism
 from generative.networks.schedulers import DDPMScheduler
 from tqdm import tqdm
-from src import LDCTHDCTAutoKLDataset
-from src import LDCTHDCTDataset
-from src import networks
+from src.brlp import networks
 from inferers import DiffusionInferer
 import numpy as np
 import matplotlib.pyplot as plt
 from generative.networks.schedulers import DDIMScheduler
-from src import T1T2Dataset
-from src import CTPETDataset
-from src import CityscapesColorDataset
-from src import Mri2DSlicedataset
-from src import PairedImageDataset
-from src.brlp.MR_to_CT import build_paired_list
-from monai.transforms import (
-    Compose,
-    LoadImaged,
-    EnsureChannelFirstd,
-    ScaleIntensityRanged,
-    NormalizeIntensityd,
-    RandFlipd,
-    RandAffined,
-    EnsureTyped,
-)
+from src.brlp.T1_T2_dataset import T1T2Dataset
+from src.brlp.CTPET_dataset import CTPETDataset
+from src.brlp.CS_dataset import CityscapesColorDataset
+from src.brlp.Mri2DSlice_dataset import Mri2DSlicedataset
+from src.brlp.ND_dataset import PairedImageDataset
+from src.brlp.ldct_hdct_dataset import LDCTHDCTDataset
+from src.brlp.MR_to_CT import  MRCTPaired
+
 # -----------------------
 # ✅ Set environment
 # -----------------------
@@ -206,7 +196,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
 
-    experiment_dir = os.path.join(args.output_dir, args.experiment_name)
+    experiment_dir = os.path.join(f"{args.output_dir}/{args.task}", args.experiment_name)
     os.makedirs(experiment_dir, exist_ok=True)
 
     # -----------------------
@@ -257,40 +247,10 @@ if __name__ == '__main__':
         )
 
     elif args.task == "MRtoCT":
-        train_root = "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/Task1/pelvis/train"
 
-        train_data = build_paired_list(train_root)
-
-        MR_CT_transforms = Compose([
-            # --- Load npy files ---
-            LoadImaged(keys=["mr", "ct"], reader="numpyreader"),
-            EnsureChannelFirstd(keys=["mr", "ct"]),  # [1, H, W]
-
-            # --- CT: HU window → [-1, 1] ---
-            ScaleIntensityRanged(
-                keys=["ct"],
-                a_min=-1000,
-                a_max=1000,
-                b_min=-1.0,
-                b_max=1.0,
-                clip=True,
-            ),
-
-            # --- MRI: per-slice z-score ---
-            NormalizeIntensityd(
-                keys=["mr"],
-                nonzero=True,
-                channel_wise=True,
-            ),
-
-            EnsureTyped(keys=["mr", "ct"]),
-        ])
-
-        dataset = CacheDataset(
-            data=train_data,
-            transform=MR_CT_transforms,
-            cache_rate=0.8,  # adjust to your RAM
-            num_workers=4,
+        dataset = MRCTPaired(
+            csv_path= "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/mr_ct_dataset_train.csv",
+            output_size=256,
         )
 
     train_loader = DataLoader(dataset=dataset,

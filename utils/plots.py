@@ -40,13 +40,22 @@ plt.show()
 import pandas as pd
 import matplotlib.pyplot as plt
 
-df = pd.read_csv("/Users/francescodifeola/Desktop/omega/uncertainty/DDPM_aleatoric_two_forward/two_forward_variance_normalized_T1T2_metrics_iterative_refinement_without_twoforward_epoch_300.csv")
+df = pd.read_csv("/Users/francescodifeola/Desktop/omega/uncertainty/results/RF_aleatoric_two_forward/T1T2_Brats/RF_T1T2_aleatoric_two_forward_metrics_iterative_refinement_without_twoforward_epoch_300.csv")
 
 mse = (df["MSE"].mean(), df["MSE"].std())
 psnr = (df["PSNR"].mean(), df["PSNR"].std())
 ssim = (df["SSIM"].mean(), df["SSIM"].std())
+# pearson = (df["Pearson"].mean(), df["Pearson"].std())
+# spearman = (df["Spearman"].mean(), df["Spearman"].std())
+# pearson_norm = (df["Pearson_norm"].mean(), df["Pearson_norm"].std())
+# spearman_norm = (df["Spearman_norm"].mean(), df["Spearman_norm"].std())
 
-print(mse, psnr, ssim)
+# print(mse, psnr, ssim) #  pearson, spearman, pearson_norm, spearman_norm)
+print(
+    f"MSE: mean={mse[0]:.3f}, std={mse[1]:.3f} | "
+    f"PSNR: mean={psnr[0]:.3f}, std={psnr[1]:.3f} | "
+    f"SSIM: mean={ssim[0]:.3f}, std={ssim[1]:.3f}"
+)
 
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -55,7 +64,7 @@ import numpy as np
 # =========================================
 # 1. Load CSV
 # =========================================
-df = pd.read_csv("/Users/francescodifeola/Desktop/omega/uncertainty/DDPM_aleatoric_two_forward/two_forward_variance_normalized_denoising_metrics_iterative_refinement_without_twoforward_epoch_300.csv")
+df = pd.read_csv("/Users/francescodifeola/Desktop/omega/uncertainty/results/RF/T1T2_Brats/metrics_epoch_50.csv")
 
 # =========================================
 # 2. LaTeX-style Configuration
@@ -154,3 +163,91 @@ epoch = 100
 
 summary = summarize_metrics(csv_path)
 print_summary(summary, epoch)
+
+
+###############################
+
+import os
+import glob
+import pandas as pd
+import numpy as np
+
+# ============================================================
+# CONFIG
+# ============================================================
+
+ROOT_DIR = "/Users/francescodifeola/Desktop/omega/uncertainty/results/T1T2/untitled folder"   # <-- change this
+OUTPUT_CSV = "summary_metrics.csv"
+
+METRICS = [
+    "MSE",
+    "PSNR",
+    "SSIM",
+    "Pearson",
+    "Spearman",
+    "AUROC_top15",
+    "AUROC_top10",
+    "AUROC_top5",
+]
+
+# ============================================================
+# HELPERS
+# ============================================================
+
+def mean_std_str(x):
+    return f"{x.mean():.3f} ± {x.std():.3f}"
+
+def parse_epoch_and_split(filename):
+    """
+    metrics_epoch_100.csv           -> epoch=100, split=test
+    metrics_epoch_100_train.csv     -> epoch=100, split=train
+    """
+    name = os.path.basename(filename)
+    split = "train" if "train" in name else "test"
+    epoch = int(name.split("epoch_")[1].split("_")[0].split(".")[0])
+    return epoch, split
+
+# ============================================================
+# MAIN
+# ============================================================
+
+rows = []
+
+for experiment in sorted(os.listdir(ROOT_DIR)):
+    exp_path = os.path.join(ROOT_DIR, experiment)
+    if not os.path.isdir(exp_path):
+        continue
+
+    csv_files = glob.glob(os.path.join(exp_path, "metrics_epoch_*.csv"))
+
+    for csv_path in csv_files:
+        df = pd.read_csv(csv_path)
+
+        epoch, split = parse_epoch_and_split(csv_path)
+
+        row = {
+            "Experiment": experiment,
+            "Epoch": epoch,
+            "Split": split,
+        }
+
+        for m in METRICS:
+            if m in df.columns:
+                row[m] = mean_std_str(df[m])
+
+        rows.append(row)
+
+summary_df = pd.DataFrame(rows)
+summary_df = summary_df.sort_values(
+    ["Experiment", "Epoch", "Split"]
+).reset_index(drop=True)
+
+# ============================================================
+# SAVE
+# ============================================================
+
+summary_df.to_csv(OUTPUT_CSV, index=False)
+
+print("\n===== SUMMARY TABLE =====\n")
+print(summary_df)
+print(f"\nSaved to {OUTPUT_CSV}")

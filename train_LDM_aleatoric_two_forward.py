@@ -16,13 +16,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 from generative.networks.schedulers import DDIMScheduler
 from monai.networks.nets.autoencoderkl import AutoencoderKL
-from src.brlp.ldct_hdct_dataset import LDCTHDCTDataset
 from src.brlp.T1_T2_dataset import T1T2Dataset
 from src.brlp.CTPET_dataset import CTPETDataset
 from src.brlp.CS_dataset import CityscapesColorDataset
 from src.brlp.Mri2DSlice_dataset import Mri2DSlicedataset
 from src.brlp.ND_dataset import PairedImageDataset
-from src.VAE.utils.checkpoints_utils import load_checkpoint
+from src.brlp.ldct_hdct_dataset import LDCTHDCTDataset
+from src.brlp.MR_to_CT import  MRCTPaired
+
 
 
 # -----------------------
@@ -273,7 +274,7 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    experiment_dir = os.path.join(args.output_dir, args.experiment_name)
+    experiment_dir = os.path.join(f"{args.output_dir}/{args.task}", args.experiment_name)
     os.makedirs(experiment_dir, exist_ok=True)
 
     # -----------------------
@@ -287,6 +288,7 @@ if __name__ == '__main__':
             annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_B.csv',
 
         )
+        scaling_factor = 9.404202
 
     elif args.task == "CS":
         transform = transforms.Compose([

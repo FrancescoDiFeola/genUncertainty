@@ -8,17 +8,17 @@ from monai.utils import set_determinism
 from generative.networks.schedulers import DDPMScheduler
 from tqdm import tqdm
 from torchvision import transforms
-from src import LDCTHDCTAutoKLDataset
-from src import LDCTHDCTDataset
-from src import networks
+from src.brlp import networks
 from inferers import DiffusionInferer
 import matplotlib.pyplot as plt
 from generative.networks.schedulers import DDIMScheduler
-from src import T1T2Dataset
-from src import CTPETDataset
-from src import Mri2DSlicedataset
-from src import CityscapesColorDataset
-from src import PairedImageDataset
+from src.brlp.T1_T2_dataset import T1T2Dataset
+from src.brlp.CTPET_dataset import CTPETDataset
+from src.brlp.CS_dataset import CityscapesColorDataset
+from src.brlp.Mri2DSlice_dataset import Mri2DSlicedataset
+from src.brlp.ND_dataset import PairedImageDataset
+from src.brlp.ldct_hdct_dataset import LDCTHDCTDataset
+from src.brlp.MR_to_CT import  MRCTPaired
 import numpy as np
 # ----------------------------------------------
 # ✅ Set environment
@@ -383,6 +383,13 @@ if __name__ == '__main__':
         dataset = LDCTHDCTDataset(
             annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_LOWDOSE.csv',
             annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_FULLDOSE.csv',
+        )
+
+    elif args.task == "MRtoCT":
+
+        dataset = MRCTPaired(
+            csv_path= "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/mr_ct_dataset_train.csv",
+            output_size=256,
         )
 
     train_loader = DataLoader(dataset=dataset,

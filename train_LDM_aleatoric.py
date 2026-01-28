@@ -397,13 +397,13 @@ if __name__ == '__main__':
     # -----------------------
 
     scaling_factor = 1
-    # Load the LDCT/HDCT dataset
     if args.task == "T1T2":
         dataset = T1T2Dataset(
             annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_A.csv',
             annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_B.csv',
 
         )
+        scaling_factor = 9.404202
 
     elif args.task == "CS":
         transform = transforms.Compose([
@@ -604,10 +604,9 @@ if __name__ == '__main__':
             # torch.cuda.empty_cache()
 
             if step % 150 == 0:
-                sample_and_plot_batch_ddim_aleatoric_v2(
+                sample_and_plot_batch_ddim_aleatoric(
                     diffusion_model=diffusion,
                     autoencoder=autoencoder,
-                    uncertainty_decoder=uncertainty_decoder,
                     condition_batch=img_A_latent,
                     gt_batch=img_B_latent,
                     writer=writer,

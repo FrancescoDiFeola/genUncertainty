@@ -203,12 +203,12 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    experiment_dir = os.path.join(args.output_dir, args.experiment_name)
+    experiment_dir = os.path.join(f"{args.output_dir}/{args.task}", args.experiment_name)
     os.makedirs(experiment_dir, exist_ok=True)
 
-    # -----------------------
+    # ----------------------- #
     # ✅ Load dataset
-    # -----------------------
+    # ----------------------- #
     scaling_factor = 1
     # Load the LDCT/HDCT dataset
     if args.task == "T1T2":
@@ -217,6 +217,7 @@ if __name__ == '__main__':
             annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_B.csv',
 
         )
+        scaling_factor = 9.404202
 
     elif args.task == "CS":
         transform = transforms.Compose([
