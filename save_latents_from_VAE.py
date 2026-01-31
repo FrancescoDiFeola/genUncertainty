@@ -9,13 +9,11 @@ from tqdm import tqdm
 from torchvision import transforms
 from src.VAE.utils.checkpoints_utils import load_checkpoint
 from monai.networks.nets.autoencoderkl import AutoencoderKL
-from src.brlp.T1_T2_dataset import T1T2Dataset
-from src.brlp.CTPET_dataset import CTPETDataset
-from src.brlp.Mri2DSlice_dataset import Mri2DSlicedataset
-from src.brlp.CS_dataset import CityscapesColorDataset
-from src.brlp.ND_dataset import PairedImageDataset
+from src.VAE.configs.train_options import TrainOptions
 from src.VAE.data.dataset_Denoising import LDCTHDCTDataset
 from src.VAE.data.dataset_T1T2 import T1T2Dataset
+from src.VAE.data.dataset_CTPET import CTPETDataset
+from src.VAE.data.dataset_MRtoCT import MRCTSingleImageDataset
 
 # --- CONFIGURAZIONE ---
 # INPUT_ROOT = "/mimer/NOBACKUP/groups/naiss2023-6-336/lcarusone/TESI_MAGISTRALE/dataset/patches_test/images"
@@ -86,7 +84,7 @@ autoencoder = AutoencoderKL(
 )
 autoencoder = autoencoder.to(DEVICE)
 
-checkpoint_dir = "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/T1T2/VAE"
+checkpoint_dir = "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/MRtoCT/VAE"
 _ = load_checkpoint(autoencoder, optimizer=None, checkpoint_dir=checkpoint_dir, model_name="autoencoder")
 autoencoder.eval()
 
@@ -99,7 +97,14 @@ if __name__ == "__main__":
     )
     """
 
+    """
     dataset = T1T2Dataset("/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/src/VAE/csvs/T1T2_train.csv")
+    """
+    # opt = TrainOptions()
+
+    # dataset = CTPETDataset(opt)
+
+    dataset = MRCTSingleImageDataset(csv_path="/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/mr_ct_dataset_train.csv")
 
     loader = DataLoader(
         dataset,

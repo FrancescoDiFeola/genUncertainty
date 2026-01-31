@@ -370,7 +370,7 @@ if __name__ == '__main__':
     parser.add_argument('--annotation_A', required=False, type=str)
     parser.add_argument('--annotation_B', required=False, type=str)
     parser.add_argument('--num_workers', default=8, type=int)
-    parser.add_argument('--n_epochs', default=5000, type=int)
+    parser.add_argument('--n_epochs', default=305, type=int)
     parser.add_argument('--batch_size', default=16, type=int)
     parser.add_argument('--lr', default=1.5e-5, type=float)
     parser.add_argument('--epoch_start', default=0, type=float)
@@ -392,6 +392,7 @@ if __name__ == '__main__':
     experiment_dir = os.path.join(f"{args.output_dir}/{args.task}", args.experiment_name)
     os.makedirs(experiment_dir, exist_ok=True)
 
+    args.VAE_ckpt = os.path.join(args.output_dir, args.task, "VAE")
     # -----------------------
     # ✅ Load dataset
     # -----------------------
@@ -433,6 +434,7 @@ if __name__ == '__main__':
 
     elif args.task == "CTPET":
         dataset = Mri2DSlicedataset(args)
+        scaling_factor = 7.200933
 
     elif args.task == "denoising":
         dataset = LDCTHDCTDataset(
@@ -603,6 +605,7 @@ if __name__ == '__main__':
 
             # torch.cuda.empty_cache()
 
+            """
             if step % 150 == 0:
                 sample_and_plot_batch_ddim_aleatoric(
                     diffusion_model=diffusion,
@@ -617,13 +620,14 @@ if __name__ == '__main__':
                     tag="DDIM_Sampling",
 
                 )
+            """
 
         writer.add_scalar('train/epoch_loss', epoch_loss / len(train_loader), epoch)
 
-        if epoch % 50 == 0:
+        if epoch % 20 == 0:
             # Save the model after each epoch.
-            torch.save(diffusion.state_dict(), os.path.join(experiment_dir, f'diffusion-ep-{epoch + args.epoch_start}.pth'))
+            torch.save(diffusion.state_dict(), os.path.join(experiment_dir, f'diffusion-ep-{epoch}.pth'))
             if args.uncertainty_calibration:
-                torch.save(diffusion.state_dict(), os.path.join(experiment_dir, f'uncertainty_decoder-ep-{epoch + args.epoch_start}.pth'))
+                torch.save(diffusion.state_dict(), os.path.join(experiment_dir, f'uncertainty_decoder-ep-{epoch}.pth'))
 
     print("Training complete.")

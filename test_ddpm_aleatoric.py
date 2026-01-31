@@ -29,6 +29,7 @@ NUM_GPUS = torch.cuda.device_count()
 
 
 
+
 def map_correlations_multi_thresholds(unc_map, pred, gt, percentiles=(95, 90, 85)):
     """
     Compute correlation and failure-discrimination metrics between uncertainty and error maps.
@@ -86,32 +87,7 @@ def map_correlations_multi_thresholds(unc_map, pred, gt, percentiles=(95, 90, 85
 
     return results
 
-def map_correlations(unc_map, pred, gt):
-    """
-    This function computes the pixel-wise correlation between the model’s uncertainty map
-    and the true reconstruction error. The uncertainty map is normalized on a per-sample basis
-    (norm_percentile) to calibrate differences in global scale across images, while the error
-    map is kept in its raw physical units. Per-image normalization preserves the spatial pattern
-    of uncertainty (relative high/low values) and makes maps comparable across the dataset
-    without distorting the true error magnitude. This provides a meaningful assessment of how
-    well uncertainty predicts local reconstruction inaccuracies.
-    """
-    # error map
-    err = np.abs(pred - gt)
 
-    # flatten for correlation
-    u = unc_map.flatten()
-    e = err.flatten()
-
-    # remove NaN/inf
-    mask = np.isfinite(u) & np.isfinite(e)
-    u = u[mask]
-    e = e[mask]
-
-    pear = pearsonr(u, e)[0]
-    spear = spearmanr(u, e)[0]
-
-    return pear, spear, err
 
 @torch.no_grad()
 def collect_calibration_data(
@@ -368,9 +344,9 @@ def run_inference_and_log_v2(
             })
 
         # Compute metrics
-        psnr = compute_psnr(gt_array[mask], pred_array[mask], data_range=gt[i][0].numpy().max() - gt[i][0].numpy().min())
-        ssim = compute_ssim(gt_array[mask], pred_array[mask], data_range=gt[i][0].numpy().max() - gt[i][0].numpy().min())
-        mse = np.mean((gt_array[mask] - pred_array[mask]) ** 2)
+        psnr = compute_psnr(gt_array, pred_array, data_range=gt[i][0].numpy().max() - gt[i][0].numpy().min())
+        ssim = compute_ssim(gt_array, pred_array, data_range=gt[i][0].numpy().max() - gt[i][0].numpy().min())
+        mse = np.mean((gt_array - pred_array) ** 2)
         # pear_norm, spear_norm, _ = map_correlations(unc[i][0].numpy(), pred_array, gt_array)
         correlations_norm = map_correlations_multi_thresholds(unc[i][0].cpu().detach().numpy(), pred_array, gt_array)
         correlations_unnorm = map_correlations_multi_thresholds(uncertainty_map[i][0].cpu().detach().numpy(), pred_array, gt_array)
@@ -490,8 +466,8 @@ if __name__ == '__main__':
     )
 
     writer = SummaryWriter(comment=args.experiment_name)
-    csv_path = os.path.join(experiment_dir, f"{args.experiment_name}_metrics_epoch_{args.epoch}_image_uncertainty.csv")
-    csv_path_2 = os.path.join(experiment_dir, f"{args.experiment_name}_metrics_epoch_{args.epoch}_uncertainty_calibration.csv")
+    csv_path = os.path.join(experiment_dir, f"{args.experiment_name}_metrics_epoch_{args.epoch}_image_uncertainty_mask.csv")
+    csv_path_2 = os.path.join(experiment_dir, f"{args.experiment_name}_metrics_epoch_{args.epoch}_uncertainty_calibration_mask.csv")
 
     # open both CSV files at the same time and keep them open during inference
     with open(csv_path, mode='w', newline='') as csvfile, \

@@ -28,7 +28,7 @@ cd /mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion
 # python3 ./test_autoKL.py --output_dir "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/VT/checkpoints/autoKL_doppio_freeze_VT" --experiment_name "autoKL_doppio_freeze_VT" --aekl_ckpt "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/VT/checkpoints/autoKL_doppio_freeze_VT/autoencoder_init-ep-300.pth" --epoch_checkpoint 300 --compute_metrics # --analyze_distribution
 
 # python3 ./test_ddpm_aleatoric.py  --num_workers 8 --experiment_name "aleatoric_uncertainty_b16_T1T2" --epoch "300" --task "T1T2"
-# python3 ./test_ddpm_aleatoric_two_forward.py  --num_workers 8 --experiment_name "two_forward_variance_normalized_T1T2" --epoch "200" --task "T1T2"  --spatial_enc_channels 1
+# python3 ./test_ddpm_aleatoric_two_forward.py  --num_workers 8 --experiment_name "two_forward_variance_normalized_T1T2" --epoch "100" --task "T1T2"  --spatial_enc_channels 1
 # python3 ./test_ddpm.py  --num_workers 8 --experiment_name "ddpm_b16_T1T2" --epoch "300" --task "T1T2" --MC_sampling
 # python3 ./test_ddpm_with_refiner.py  --num_workers 32 --experiment_name "ddpm_with_joint_refiner_T1T2" --output_dir "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/uncertainty_diffusion/checkpoints/ddpm_with_joint_refiner_T1T2" --diff_ckpt "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/uncertainty_diffusion/checkpoints/ddpm_with_joint_refiner_T1T2/diffusion-ep-450.pth" --refiner_ckpt "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/uncertainty_diffusion/checkpoints/ddpm_with_joint_refiner_T1T2/joint_refiner-ep-450.pth"
 
@@ -46,7 +46,7 @@ cd /mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion
 # python3 ./test_ddpm_with_double_refiner.py  --num_workers 32 --experiment_name "ddpm_with_double_refiner_T1T2" --output_dir "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/uncertainty_diffusion/checkpoints/ddpm_with_double_refiner_T1T2" --diff_ckpt "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/uncertainty_diffusion/checkpoints/ddpm_with_double_refiner_T1T2/diffusion-ep-550.pth" --refiner1_ckpt "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/uncertainty_diffusion/checkpoints/ddpm_with_double_refiner_T1T2/error_refiner-ep-550.pth" --refiner2_ckpt "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/uncertainty_diffusion/checkpoints/ddpm_with_double_refiner_T1T2/variance_refiner-ep-550.pth"
 
 
-python3 ./test_RF_aleatoric_two_forward.py --num_workers 8 --experiment_name "RF_T1T2_aleatoric_two_forward" --task "T1T2" --spatial_enc_channels 1 --epoch "50"
+python3 ./test_RF_aleatoric_two_forward.py --num_workers 8 --experiment_name "RF_T1T2_aleatoric_two_forward" --task "T1T2" --spatial_enc_channels 1 --epoch "250"
 # python3 ./test_RF_aleatoric.py --num_workers 8 --experiment_name "RF_T1T2_aleatoric" --diff_ckpt "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/RF_T1T2_aleatoric/diffusion-ep-100.pth"
 # python3 ./test_RF.py --num_workers 8 --experiment_name "RF_T1T2" --diff_ckpt "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/RF_T1T2/diffusion-ep-100.pth"
 
@@ -55,7 +55,7 @@ python3 ./test_RF_aleatoric_two_forward.py --num_workers 8 --experiment_name "RF
 
 # python3 ./test_LDM.py  --num_workers 8 --experiment_name "LDM_T1T2" --task "T1T2" --epoch "50" --in_ch 6 --out_ch 3
 # python3 ./test_LDM_aleatoric.py  --num_workers 8 --experiment_name "LDM_aleatoric_T1T2" --task "T1T2" --epoch "300" --in_ch 6 --out_ch 3
-# python3 ./test_LDM_aleatoric_two_forward.py  --num_workers 8 --experiment_name "LDM_aleatoric_two_forward_denoising" --task "denoising" --epoch "50" --in_ch 6 --out_ch 3 --spatial_enc_channels 3
+# python3 ./test_LDM_aleatoric_two_forward.py  --num_workers 8 --experiment_name "LDM_aleatoric_two_forward_T1T2" --task "T1T2" --epoch "250" --in_ch 6 --out_ch 3 --spatial_enc_channels 3
 
 
 # python3 ./utils/prepare_dataset.py

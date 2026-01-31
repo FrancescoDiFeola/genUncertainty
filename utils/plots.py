@@ -40,21 +40,27 @@ plt.show()
 import pandas as pd
 import matplotlib.pyplot as plt
 
-df = pd.read_csv("/Users/francescodifeola/Desktop/omega/uncertainty/results/RF_aleatoric_two_forward/T1T2_Brats/RF_T1T2_aleatoric_two_forward_metrics_iterative_refinement_without_twoforward_epoch_300.csv")
+df = pd.read_csv("/Users/francescodifeola/Desktop/omega/uncertainty/results/T1T2/LDM/baseline/metrics_epoch_300.csv")
 
 mse = (df["MSE"].mean(), df["MSE"].std())
 psnr = (df["PSNR"].mean(), df["PSNR"].std())
 ssim = (df["SSIM"].mean(), df["SSIM"].std())
-# pearson = (df["Pearson"].mean(), df["Pearson"].std())
-# spearman = (df["Spearman"].mean(), df["Spearman"].std())
-# pearson_norm = (df["Pearson_norm"].mean(), df["Pearson_norm"].std())
-# spearman_norm = (df["Spearman_norm"].mean(), df["Spearman_norm"].std())
+# pearson = (df["Pearson_u_norm"].mean(), df["Pearson_u_norm"].std())
+# spearman = (df["Spearman_u_norm"].mean(), df["Spearman_u_norm"].std())
+# auc_top15 = (df["AUROC_top15_u_norm"].mean(), df["AUROC_top15_u_norm"].std())
+# auc_top10 = (df["AUROC_top10_u_norm"].mean(), df["AUROC_top10_u_norm"].std())
+# auc_top5 = (df["AUROC_top5_u_norm"].mean(), df["AUROC_top5_u_norm"].std())
+
 
 # print(mse, psnr, ssim) #  pearson, spearman, pearson_norm, spearman_norm)
 print(
-    f"MSE: mean={mse[0]:.3f}, std={mse[1]:.3f} | "
+    f"SSIM: mean={ssim[0]:.3f}, std={ssim[1]:.3f} | "
     f"PSNR: mean={psnr[0]:.3f}, std={psnr[1]:.3f} | "
-    f"SSIM: mean={ssim[0]:.3f}, std={ssim[1]:.3f}"
+    # f"Pearson: mean={pearson[0]:.3f}, std={pearson[1]:.3f} | "
+    # f"Spearman: mean={spearman[0]:.3f}, std={spearman[1]:.3f} |  "
+    # f"AUC_top15: mean={auc_top15[0]:.3f}, std={auc_top15[1]:.3f} | "
+    # f"AUC_top10: mean={auc_top10[0]:.3f}, std={auc_top10[1]:.3f} | "
+    # f"AUC_top5: mean={auc_top5[0]:.3f}, std={auc_top5[1]:.3f} | "
 )
 
 import pandas as pd

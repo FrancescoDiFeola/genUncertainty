@@ -306,6 +306,7 @@ if __name__ == '__main__':
 
             torch.cuda.empty_cache()
 
+            """
             if step % 150 == 0:
                 run_inference(
                     diffusion_model=diffusion,
@@ -318,6 +319,7 @@ if __name__ == '__main__':
                     tag="Rectified_Flow",
 
                 )
+            """
 
         writer.add_scalar('train/epoch_loss', epoch_loss / len(train_loader), epoch)
 

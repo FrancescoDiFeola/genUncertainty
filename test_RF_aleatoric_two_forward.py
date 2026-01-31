@@ -9,11 +9,18 @@ from tqdm import tqdm
 import numpy as np
 from torch.cuda.amp import autocast
 import matplotlib.pyplot as plt
+from torchvision import transforms
 import csv
 from skimage.metrics import peak_signal_noise_ratio as compute_psnr, structural_similarity as compute_ssim
-from src import T1T2Dataset
-from src import LDCTHDCTDataset
-from src import networks
+from src.brlp.T1_T2_dataset import T1T2Dataset
+from src.brlp.ldct_hdct_dataset import LDCTHDCTDataset
+from src.brlp.T1_T2_dataset import T1T2Dataset
+from src.brlp.ldct_hdct_dataset import LDCTHDCTDataset
+from src.brlp.Mri2DSlice_dataset import Mri2DSlicedataset
+from src.brlp.ND_dataset import PairedImageDataset
+from src.brlp.CS_dataset import CityscapesColorDataset
+from src.brlp import networks
+from sklearn.metrics import roc_auc_score
 from scipy.stats import pearsonr, spearmanr
 
 # -----------------------
@@ -23,6 +30,62 @@ set_determinism(0)
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 NUM_GPUS = torch.cuda.device_count()
 
+def map_correlations_multi_thresholds(unc_map, pred, gt, percentiles=(95, 90, 85)):
+    """
+    Compute correlation and failure-discrimination metrics between uncertainty and error maps.
+
+    For each percentile p:
+      - define failure pixels as top (100 - p)% highest-error pixels
+      - compute AUROC of uncertainty predicting failure
+
+    Args:
+        unc_map (np.ndarray): uncertainty map (H, W) or (C, H, W)
+        pred (np.ndarray): prediction
+        gt (np.ndarray): ground truth
+        percentiles (tuple): percentiles defining error thresholds
+                             (95 -> top 5%, 90 -> top 10%, etc.)
+
+    Returns:
+        results (dict): dictionary with:
+            - pearson
+            - spearman
+            - auroc_top_5
+            - auroc_top_10
+            - auroc_top_15
+    """
+
+    # --- error map ---
+    err = np.abs(pred - gt)
+
+    # flatten
+    u = unc_map.flatten()
+    e = err.flatten()
+
+    # remove NaN / Inf
+    mask = np.isfinite(u) & np.isfinite(e)
+    u = u[mask]
+    e = e[mask]
+
+    results = {}
+
+    # --- global correlations ---
+    results["pearson"] = pearsonr(u, e)[0]
+    results["spearman"] = spearmanr(u, e)[0]
+
+    # --- failure discrimination at multiple thresholds ---
+    for p in percentiles:
+        err_thresh = np.percentile(e, p)
+        err_bin = (e > err_thresh).astype(np.int32)
+
+        # AUROC is only valid if both classes exist
+        if len(np.unique(err_bin)) > 1:
+            auroc = roc_auc_score(err_bin, u)
+        else:
+            auroc = np.nan
+
+        results[f"AUROC_top{100-p}"] = auroc
+
+    return results
 
 def map_correlations(unc_map, pred, gt):
     """
@@ -62,6 +125,46 @@ def norm_percentile(x, pmin=1, pmax=99):
         x_i = torch.clamp(x_i, min=min_val, max=max_val)
         normed[i] = (x_i - min_val) / (max_val - min_val + 1e-8)
     return normed
+
+@torch.no_grad()
+def collect_calibration_data(
+    unc_map: torch.Tensor,
+    err_map: torch.Tensor,
+    num_bins: int = 15,  # number of callibration bins
+):
+    """
+    Collect per-bin statistics for calibration (ECE / reliability).
+
+    Args:
+        unc_map: (H, W) uncertainty (std or variance, NOT normalized)
+        err_map: (H, W) absolute error
+    Returns:
+        bin_unc_mean, bin_err_mean, bin_count
+    """
+    u = unc_map.flatten()
+    e = err_map.flatten()
+
+    mask = torch.isfinite(u) & torch.isfinite(e)
+    u = u[mask]
+    e = e[mask]
+
+    # Define bins over uncertainty  [q1, q2, ...., q15], Each bin contains roughly the same number of pixels, bobust to heavy-tailed uncertainty distributions, Prevents empty bins, standard in the literature
+    bins = torch.quantile(u, torch.linspace(0, 1, num_bins + 1, device=u.device))
+    bin_ids = torch.bucketize(u, bins[1:-1]) # assign each pixel to a bin
+
+    bin_unc_mean = []
+    bin_err_mean = []
+    bin_count = []
+
+    for b in range(num_bins):
+        idx = bin_ids == b
+        if idx.sum() == 0:
+            continue
+        bin_unc_mean.append(u[idx].mean().item()) # map the predicted uncertaintu in the bin, Average model-predicted uncertainty for pixels in bin b.
+        bin_err_mean.append(e[idx].mean().item()) # Average actual reconstruction error for the same pixels.
+        bin_count.append(idx.sum().item())
+
+    return bin_unc_mean, bin_err_mean, bin_count
 
 @torch.no_grad()
 def run_inference(  # in this function the each sampling step the first forward is used to obtain the uncertainty map without conditioning with cross attention
@@ -445,37 +548,302 @@ def run_inference_v3( # in this function the uncertainty is used for iterative r
     writer.add_figure("Test/Inference", plt.gcf(), global_step=step)
     plt.close()
 
+
+@torch.no_grad()
+def run_inference_and_log_v3_clean_unc_integral( # in this function the uncertainty is used for iterative refinement without two-forward
+        diffusion_model,
+        context_encoder,
+        channels,
+        dir,
+        condition_batch,
+        gt_batch,
+        writer,
+        step,
+        device,
+        scheduler,
+        csv_writer,
+        csv_writer_2,
+):
+    diffusion_model.eval()
+    B, C, H, W = condition_batch.shape
+
+    x = torch.randn_like(condition_batch).to(device)
+    condition_batch = condition_batch.to(device)
+    gt_batch = gt_batch.to(device)
+
+    # ==================================================
+    # Trajectory-level uncertainty accumulator (x0 space)
+    # ==================================================
+    U_v = torch.zeros((B, 1, H, W), device=device)
+    num_valid_steps = 0
+
+    num_steps = len(scheduler.timesteps)
+    K = 10  # number of late decision-relevant steps (excluding final)
+    prev_uncertainty_map = None
+    all_next_timesteps = torch.cat((scheduler.timesteps[1:],torch.tensor([0], dtype=scheduler.timesteps.dtype, device=scheduler.timesteps.device)))
+    for i, (t, next_t) in enumerate(tqdm(zip(scheduler.timesteps, all_next_timesteps), total = min(len(scheduler.timesteps), len(all_next_timesteps)),)):
+        t_tensor = torch.tensor([t], device=device).long()
+
+        # -----------------------------
+        # 🌀 First Pass: no context (baseline prediction)
+        # -----------------------------
+        model_input = torch.cat([x, condition_batch], dim=1)
+
+        # ==================================================
+        # (i == 0): double forward
+        # ==================================================
+        if i == 0:
+            # ---- pass 1: dummy context
+            with autocast(True):
+                dummy_context = torch.zeros((1, 1, 128), device=device)
+                predicted_velocity_1, pred_logvar_1 = diffusion_model(x=model_input, timesteps=t_tensor, context=dummy_context)
+
+            # ---- build uncertainty
+            uncertainty_map = norm_percentile(
+                torch.exp(pred_logvar_1.float())
+            )
+
+            context_vector = context_encoder(uncertainty_map)
+
+            # ---- pass 2: refined
+            with autocast(True):
+                predicted_velocity, pred_logvar = diffusion_model(
+                    x=model_input,
+                    timesteps=t_tensor,
+                    context=context_vector
+                )
+
+        # ==================================================
+        # ALL FOLLOWING STEPS: single forward
+        # ==================================================
+        else:
+            context_vector = context_encoder(prev_uncertainty_map)
+
+            with autocast(True):
+                predicted_velocity, pred_logvar = diffusion_model(
+                    x=model_input,
+                    timesteps=t_tensor,
+                    context=context_vector
+                )
+        # ==================================================
+        # Update uncertainty memory
+        # ==================================================
+        prev_uncertainty_map = norm_percentile(
+            torch.exp(pred_logvar.float())
+        )
+
+        # ==================================================
+        # Accumulate late-step decision-time uncertainty
+        # ==================================================
+        if (num_steps - K - 1) <= i < (num_steps - 1):
+
+            # Learned variance of the velocity field
+            var_v_t = torch.exp(pred_logvar.float())
+
+            # Optional: weight by dt^2 (commented out by default)
+            # dt = 1.0 / scheduler.num_inference_steps
+            # var_v_t = (dt ** 2) * var_v_t
+
+            U_v += var_v_t
+            num_valid_steps += 1
+
+        # ==================================================
+        # DDIM update
+        # ==================================================
+        x, _ = scheduler.step(predicted_velocity, t, x, next_t)
+
+        norm_second = norm_percentile(prev_uncertainty_map).cpu()
+
+        # Save each sample's uncertainty as PNG
+        if int(step) == 1:
+            for b in range(B):
+                arr = norm_second[b].squeeze(0).numpy()
+                png_path = os.path.join(dir, f"sample{b}_{step}_t_step{int(t)}_epoch_350.png")
+                plt.imsave(png_path, arr, cmap='hot')
+
+    pred_denoised = x
+    # uncertainty_map = torch.exp(uncertainty)
+
+    # --------------------------------------------------
+    # Final trajectory-averaged uncertainty
+    # --------------------------------------------------
+    U_v = U_v / max(num_valid_steps, 1)
+    uncertainty_map = U_v
+
+    ld = condition_batch.cpu().detach()
+    gt = gt_batch.cpu().detach()
+    pred = pred_denoised.cpu().detach()
+    unc = norm_percentile(uncertainty_map).cpu().detach()
+    error = norm_percentile(abs(pred - gt))
+
+    fig, axes = plt.subplots(nrows=B, ncols=5, figsize=(8, 2.5 * B))
+    if B == 1:
+        axes = [axes]
+
+    for i in range(B):
+        images = [ld[i], gt[i], pred[i], unc[i], error[i]]
+        titles = ["T1", "T2", "Prediction", "Uncertainty", "Error"]
+
+        # Extract arrays
+        gt_array = gt[i][0].numpy()
+        pred_array = pred[i][0].numpy()
+        # Create a mask where gt is not zero
+        # mask = gt_array != 0
+
+        # --- Calibration data ---
+        unc_raw = uncertainty_map[i][0].cpu()
+        err_raw = (pred[i][0] - gt[i][0]).abs()
+
+        bin_u, bin_e, bin_n = collect_calibration_data(
+            unc_raw,
+            err_raw,
+            num_bins=15
+        )
+
+        # Log per-bin values for later plotting
+        for k in range(len(bin_u)):
+            csv_writer_2.writerow({
+                'Sample': step * B + i,
+                'Bin': k,
+                'Unc_mean': bin_u[k],
+                'Err_mean': bin_e[k],
+                'Count': bin_n[k],
+                'Type': 'calibration'
+            })
+
+        ######### Compute metrics #########
+        psnr = compute_psnr(gt_array, pred_array, data_range=gt[i][0].numpy().max() - gt[i][0].numpy().min())
+        ssim = compute_ssim(gt_array, pred_array, data_range=gt[i][0].numpy().max() - gt[i][0].numpy().min())
+        mse = np.mean((gt_array - pred_array) ** 2)
+        # psnr = compute_psnr(gt_array, pred_array, data_range=gt[i][0].numpy().max() - gt[i][0].numpy().min())
+        # ssim = compute_ssim(gt_array, pred_array, data_range=gt[i][0].numpy().max() - gt[i][0].numpy().min())
+        # mse = np.mean((gt_array - pred_array) ** 2)
+        correlations_norm = map_correlations_multi_thresholds(unc[i][0].cpu().detach().numpy(), pred_array, gt_array)
+        correlations_unnorm = map_correlations_multi_thresholds(uncertainty_map[i][0].cpu().detach().numpy(), pred_array, gt_array)
+
+        print(psnr, ssim, mse,
+              correlations_norm["pearson"],
+              correlations_norm["spearman"],
+              correlations_norm["AUROC_top15"],
+              correlations_norm["AUROC_top10"],
+              correlations_norm["AUROC_top5"],
+              correlations_unnorm["pearson"],
+              correlations_unnorm["spearman"],
+              correlations_unnorm["AUROC_top15"],
+              correlations_unnorm["AUROC_top10"],
+              correlations_unnorm["AUROC_top5"])
+
+
+        csv_writer.writerow({'Sample': step * B + i,
+                             'MSE': mse,
+                             'PSNR': psnr,
+                             'SSIM': ssim,
+                             'Pearson_u_norm': correlations_norm["pearson"],
+                             'Spearman_u_norm': correlations_norm["spearman"],
+                             'AUROC_top15_u_norm': correlations_norm["AUROC_top15"],
+                             'AUROC_top10_u_norm': correlations_norm["AUROC_top10"],
+                             'AUROC_top5_u_norm': correlations_norm["AUROC_top5"],
+                             'Pearson_u_unnorm': correlations_unnorm["pearson"],
+                             'Spearman_u_unnorm': correlations_unnorm["spearman"],
+                             'AUROC_top15_u_unnorm': correlations_unnorm["AUROC_top15"],
+                             'AUROC_top10_u_unnorm': correlations_unnorm["AUROC_top10"],
+                             'AUROC_top5_u_unnorm': correlations_unnorm["AUROC_top5"],
+                             })
+
+        for j in range(5):
+            ax = axes[i][j] if B > 1 else axes[0][j]
+            ax.set_axis_off()
+            ax.set_title(titles[j])
+            img = images[j].squeeze(0).cpu().numpy()
+            ax.imshow(img, cmap='hot' if titles[j] in ["Uncertainty", "Error"] else 'gray')
+
+    plt.tight_layout()
+    writer.add_figure("Test/Inference", plt.gcf(), global_step=step)
+    plt.close()
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset_csv', type=str, required=False)
     parser.add_argument('--output_dir', type=str,default="/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/", required=False)
-    parser.add_argument('--diff_ckpt', type=str, required=True)
-    parser.add_argument('--context_ckpt', type=str, required=True)
+    parser.add_argument('--diff_ckpt', type=str, required=False)
+    parser.add_argument('--task', required=True, type=str)
+    parser.add_argument('--context_ckpt', type=str, required=False)
+    parser.add_argument('--in_ch', default=2, type=int)
+    parser.add_argument('--out_ch', default=1, type=int)
     parser.add_argument('--experiment_name', type=str, required=True)
+    parser.add_argument('--epoch', default=None, type=str)
     parser.add_argument('--batch_size', default=1, type=int)
     parser.add_argument('--num_workers', default=4, type=int)
     parser.add_argument('--spatial_enc_channels', type=int, default=2)
+
+    parser.add_argument('--dataroot', required=False, help='path to images (should have subfolders trainA, trainB, valA, valB, etc)')
+    parser.add_argument('--mri_modalities', default=["t1n", "t1c", "t2w", "t2f"], help='which MRI modality to use', nargs='+', type=str)
+    parser.add_argument('--slice_range', type=int, nargs=2, default=[0, 999], help='Range of slice indices to include, e.g., --slice_range 30 128')
+    parser.add_argument('--phase', type=str, default=None, help='train or test, if None dont split')
+    parser.add_argument('--under_sample_dataset', action="store_true", help='True undersample the dataset deleting one slice every three')
     args = parser.parse_args()
 
-    experiment_dir = os.path.join(args.output_dir, args.experiment_name)
+    experiment_dir = os.path.join(args.output_dir, args.task, args.experiment_name)
     os.makedirs(experiment_dir, exist_ok=True)
     print(f"Checkpoint directory: {experiment_dir}")
 
-    """
-    dataset = T1T2Dataset(
-        annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_A_test.csv',
-        annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_B_test.csv',
-    )
-    """
+    args.diff_ckpt = os.path.join(experiment_dir, f"diffusion-ep-{args.epoch}.pth")
+    args.context_ckpt = os.path.join(experiment_dir, f"spatial_encoder-ep-{args.epoch}.pth")
 
-    dataset = LDCTHDCTDataset(
-        annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D2/annotations_test_lowdose_GAN_D2_nuovo_ordinato.csv',
-        annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D2/annotations_test_fulldose_GAN_D2_nuovo_ordinato.csv',
-    )
+    # --------------------------
+    # ✅ Load dataset
+    # --------------------------
+    # Load the LDCT/HDCT dataset
+    if args.task == "T1T2":
+        dataset = T1T2Dataset(
+            annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_A.csv',
+            annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_B.csv',
+        )
+
+    elif args.task == "CS":
+        transform = transforms.Compose([
+            transforms.Resize((256, 512)),
+            transforms.ToTensor()
+        ])
+
+        dataset = CityscapesColorDataset(
+            root=args.dataroot,
+            split="train",
+            transform=transform,
+            target_transform=transform
+        )
+
+
+    elif args.task == "ND":
+        transform = transforms.Compose([
+            transforms.Resize((272, 480)),
+            transforms.ToTensor()
+        ])
+
+        dataset = PairedImageDataset(
+            csv_path="test.csv",
+            root_dir="/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/ND_dataset",
+            transform_A=transform,
+            transform_B=transform
+        )
+
+
+    elif args.task == "CTPET":
+        dataset = Mri2DSlicedataset(args)
+
+
+    elif args.task == "denoising":
+        dataset = LDCTHDCTDataset(
+            annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D2/annotations_test_lowdose_GAN_D2_nuovo_ordinato.csv',
+            annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D2/annotations_test_fulldose_GAN_D2_nuovo_ordinato.csv',
+            # annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_LOWDOSE.csv',
+            # annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_FULLDOSE.csv',
+        )
 
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
+
     # diffusion = networks.init_ddpm_uncertainty(args.diff_ckpt, use_cross_attention=True).to(DEVICE)
-    diffusion = networks.init_ddpm_aleatoric_two_forward(2, 1, args.diff_ckpt).to(DEVICE)
+    diffusion = networks.init_ddpm_aleatoric_two_forward(args.in_ch, args.out_ch, args.diff_ckpt).to(DEVICE)
     spatial_encoder = networks.init_spatial_context_encoder(channels=args.spatial_enc_channels, cross_attention_dim=128, checkpoints_path=args.context_ckpt).to(DEVICE)
 
     if NUM_GPUS > 1:
@@ -494,15 +862,26 @@ if __name__ == '__main__':
     scheduler.set_timesteps(num_inference_steps=30, device=DEVICE, input_img_size_numel=256*256)
 
     writer = SummaryWriter(comment=args.experiment_name)
-    csv_path = os.path.join(experiment_dir, f"{args.experiment_name}_metrics_iterative_refinement_without_twoforward_epoch_300.csv")
+    csv_path = os.path.join(experiment_dir, f"{args.experiment_name}_metrics_iterative_refinement_without_twoforward_epoch_{args.epoch}_image_uncertainty_K_10.csv")
+    csv_path_2 = os.path.join(experiment_dir, f"{args.experiment_name}_metrics_iterative_refinement_without_twoforward_epoch_{args.epoch}_uncertainty_calibration_K_10.csv")
 
-    with open(csv_path, mode='w', newline='') as csvfile:
-        fieldnames = ['Sample', 'MSE', 'PSNR', 'SSIM', 'Pearson', 'Spearman']
+    # open both CSV files at the same time and keep them open during inference
+    with open(csv_path, mode='w', newline='') as csvfile, \
+            open(csv_path_2, mode='w', newline='') as csvfile_2:
+
+        # metrics CSV
+        fieldnames = ['Sample', 'MSE', 'PSNR', 'SSIM', 'Pearson_u_norm', 'Spearman_u_norm',  'AUROC_top15_u_norm', 'AUROC_top10_u_norm', 'AUROC_top5_u_norm', 'Pearson_u_unnorm', 'Spearman_u_unnorm',  'AUROC_top15_u_unnorm', 'AUROC_top10_u_unnorm', 'AUROC_top5_u_unnorm']
         writer_csv = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer_csv.writeheader()
 
+        # calibration CSV
+        fieldnames_2 = ['Sample', 'Bin', 'Unc_mean', 'Err_mean', 'Count', 'Type']
+        writer_csv_2 = csv.DictWriter(csvfile_2, fieldnames=fieldnames_2)
+        writer_csv_2.writeheader()
+
         for step, batch in enumerate(loader):
-            run_inference_v3(
+
+            run_inference_and_log_v3_clean_unc_integral(
                 diffusion_model=diffusion,
                 context_encoder=spatial_encoder,
                 channels=args.spatial_enc_channels,
@@ -513,7 +892,9 @@ if __name__ == '__main__':
                 step=step,
                 device=DEVICE,
                 scheduler=scheduler,
-                csv_writer=writer_csv
+                csv_writer=writer_csv,
+                csv_writer_2=writer_csv_2,
             )
 
     print(f"✅ Inference complete. Metrics saved to {csv_path}")
+

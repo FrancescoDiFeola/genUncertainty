@@ -216,36 +216,298 @@ def run_inference_and_log(
         mask = gt_array != 0
 
         # Compute metrics
-        psnr = compute_psnr(gt_array[mask], pred_array[mask], data_range=gt[i][0].numpy().max() - gt[i][0].numpy().min())
-        ssim = compute_ssim(gt_array[mask], pred_array[mask], data_range=gt[i][0].numpy().max() - gt[i][0].numpy().min())
-        mse = np.mean((gt_array[mask] - pred_array[mask]) ** 2)
-        correlations = map_correlations_multi_thresholds(unc[i][0].numpy(), pred_array, gt_array)
-        print(f'PSNR: {psnr}, SSIM: {ssim}, MSE: {mse}, Pearson: {correlations["pearson"]}, Spearman: {correlations["spearman"]}, AUROC_top15: {correlations["AUROC_top15"]}, AUROC_top10: {correlations["AUROC_top10"]}, AUROC_top5: {correlations["AUROC_top5"]}')
-
+        psnr = compute_psnr(gt_array, pred_array, data_range=gt[i][0].numpy().max() - gt[i][0].numpy().min())
+        ssim = compute_ssim(gt_array, pred_array, data_range=gt[i][0].numpy().max() - gt[i][0].numpy().min())
+        mse = np.mean((gt_array - pred_array) ** 2)
+        correlations_norm = map_correlations_multi_thresholds(unc[i][0].cpu().detach().numpy(), pred_array, gt_array)
+        correlations_unnorm = map_correlations_multi_thresholds(uncertainty_map[i][0].cpu().detach().numpy(), pred_array, gt_array)
 
         csv_writer.writerow({'Sample': step * B + i,
                              'MSE': mse,
                              'PSNR': psnr,
                              'SSIM': ssim,
-                             'Pearson': correlations["pearson"],
-                             'Spearman': correlations["spearman"],
-                             'AUROC_top15': correlations["AUROC_top15"],
-                             'AUROC_top10': correlations["AUROC_top10"],
-                             'AUROC_top5': correlations["AUROC_top5"],})
+                             'Pearson_u_norm': correlations_norm["pearson"],
+                             'Spearman_u_norm': correlations_norm["spearman"],
+                             'AUROC_top15_u_norm': correlations_norm["AUROC_top15"],
+                             'AUROC_top10_u_norm': correlations_norm["AUROC_top10"],
+                             'AUROC_top5_u_norm': correlations_norm["AUROC_top5"],
+                             'Pearson_u_unnorm': correlations_unnorm["pearson"],
+                             'Spearman_u_unnorm': correlations_unnorm["spearman"],
+                             'AUROC_top15_u_unnorm': correlations_unnorm["AUROC_top15"],
+                             'AUROC_top10_u_unnorm': correlations_unnorm["AUROC_top10"],
+                             'AUROC_top5_u_unnorm': correlations_unnorm["AUROC_top5"],
+                             })
 
-        """
-        for j in range(5):
+        for j in range(4):
             ax = axes[i][j] if B > 1 else axes[0][j]
             ax.set_axis_off()
             ax.set_title(titles[j])
             img = images[j].squeeze(0).cpu().numpy()
             ax.imshow(img, cmap='hot' if titles[j] in ["Uncertainty", "Error"] else 'gray')
-        """
 
-    # plt.tight_layout()
-    # writer.add_figure("Test/Inference", plt.gcf(), global_step=step)
-    # plt.close()
+    plt.tight_layout()
+    writer.add_figure("Test/Inference", plt.gcf(), global_step=step)
+    plt.close()
 
+@torch.no_grad()
+def run_inference_and_log_uncertainty_propagation(
+        diffusion_model,
+        autoencoder,
+        condition_batch,
+        gt_batch,
+        writer,
+        step,
+        device,
+        scheduler,
+        scaling,
+        csv_writer,
+        mc_decode_samples: int = 10,
+        K: int = 10,   # number of late denoising steps used for uncertainty aggregation
+):
+    # ------------------------------------------------------------------
+    # Evaluation mode: no dropout, no batchnorm updates
+    # ------------------------------------------------------------------
+    diffusion_model.eval()
+    autoencoder.eval()
+
+    # ------------------------------------------------------------------
+    # Basic shapes and setup
+    # condition_batch and x live in LATENT space
+    # ------------------------------------------------------------------
+    B, C, H, W = condition_batch.shape
+
+    scheduler.set_timesteps(50)
+    scheduler.alphas_cumprod = scheduler.alphas_cumprod.to(device)
+
+    # ------------------------------------------------------------------
+    # Initial noisy latent z_T ~ N(0, I)
+    # This defines a single deterministic diffusion trajectory
+    # ------------------------------------------------------------------
+    x = torch.randn_like(condition_batch).to(device)
+
+    condition_batch = condition_batch.to(device)
+    gt_batch = gt_batch.to(device)
+
+    num_steps = len(scheduler.timesteps)
+    print(f"num_steps: {num_steps}")
+    # ==================================================
+    # Accumulator for decision-time latent uncertainty
+    #
+    # U_z0 will store the SUM of propagated variances
+    # Var(z0 | t) across the last K denoising steps.
+    #
+    # This represents uncertainty of the reverse estimator,
+    # NOT stochasticity of the diffusion process.
+    # ==================================================
+    U_z0 = torch.zeros_like(x)
+    num_valid_steps = 0
+
+    # ==================================================
+    # DDIM sampling in latent space
+    #
+    # We follow a standard deterministic DDIM trajectory.
+    # Uncertainty is accumulated but NEVER injected into x.
+    # ==================================================
+    for i, t in enumerate(tqdm(scheduler.timesteps, desc="DDIM Sampling")):
+
+        t_tensor = torch.tensor([t], device=device).long()
+        model_input = torch.cat([x, condition_batch], dim=1)
+
+        # --------------------------------------------------
+        # Reverse model outputs:
+        #  - pred_noise: mean estimate of ε
+        #  - pred_logvar: learned log-variance of ε
+        #
+        # The variance head models predictive uncertainty
+        # of the reverse estimator at this denoising step.
+        # --------------------------------------------------
+        pred_noise, pred_logvar = diffusion_model(
+            x=model_input,
+            timesteps=t_tensor,
+            context=None
+        )
+
+        # ==================================================
+        # Accumulate late-step decision-time uncertainty
+        #
+        # We only consider the LAST K steps (excluding final),
+        # where the signal-to-noise ratio is high and uncertainty
+        # correlates with final reconstruction error.
+        #
+        # Early steps are ignored as they are noise-dominated.
+        # ==================================================
+        if (num_steps - K - 1) <= i < (num_steps - 1):
+
+            # --------------------------------------------------
+            # ᾱ_t controls how ε uncertainty propagates to z0
+            # --------------------------------------------------
+            a_bar = scheduler.alphas_cumprod[t].view(-1, 1, 1, 1)
+
+            # --------------------------------------------------
+            # Learned variance in ε-space
+            # This is the ONLY source of uncertainty
+            # --------------------------------------------------
+            var_eps = torch.exp(pred_logvar.float())
+
+            # --------------------------------------------------
+            # Analytic propagation from ε-space to z0-space:
+            #
+            # Var(z0 | t) = (1 - ᾱ_t) / ᾱ_t · Var(ε)
+            #
+            # This follows directly from the DDPM formulation
+            # and does NOT involve sampling.
+            # --------------------------------------------------
+            var_z0_t = (1.0 - a_bar) / (a_bar + 1e-8) * var_eps
+
+            # --------------------------------------------------
+            # If variance head is single-channel but latent
+            # has multiple channels, broadcast uncertainty.
+            # This assumes channel-wise independence.
+            # --------------------------------------------------
+            if var_z0_t.shape[1] == 1 and x.shape[1] > 1:
+                var_z0_t = var_z0_t.expand(-1, x.shape[1], -1, -1)
+
+            # --------------------------------------------------
+            # Accumulate uncertainty across late steps
+            # --------------------------------------------------
+            U_z0 += var_z0_t
+            num_valid_steps += 1
+
+        # ==================================================
+        # Deterministic DDIM update
+        #
+        # Note: uncertainty does NOT affect the trajectory.
+        # ==================================================
+        x, _ = scheduler.step(pred_noise, t_tensor, x)
+
+    # ======================================================
+    # Final latent mean and aggregated uncertainty
+    #
+    # pred_denoised_latent is the mean prediction μ_z0
+    # ======================================================
+    pred_denoised_latent = x
+
+    # --------------------------------------------------
+    # Average accumulated variance across K steps
+    # --------------------------------------------------
+    var_z0 = U_z0 / max(num_valid_steps, 1)
+
+    # --------------------------------------------------
+    # Convert variance to standard deviation
+    #
+    # Required because we will SAMPLE latent perturbations.
+    # --------------------------------------------------
+    sigma_z0 = torch.sqrt(var_z0.clamp_min(1e-12))
+
+    # ==================================================
+    # Decode the latent mean to pixel space
+    #
+    # This is the final reconstructed image.
+    # ==================================================
+    pred_denoised = autoencoder.decode(pred_denoised_latent / scaling)
+    condition_dec = autoencoder.decode(condition_batch / scaling)
+
+    # ==================================================
+    # Monte Carlo decoding of learned uncertainty
+    #
+    # This approximates propagation through the decoder
+    # Jacobian without explicitly computing it.
+    #
+    # z0^(s) = μ_z0 + σ_z0 ⊙ ε_s
+    # x^(s)  = D(z0^(s))
+    # ==================================================
+    decoded_samples = []
+    for _ in range(mc_decode_samples):
+        eps = torch.randn_like(pred_denoised_latent)
+        z0_s = pred_denoised_latent + sigma_z0 * eps
+        x_s = autoencoder.decode(z0_s / scaling)
+        decoded_samples.append(x_s)
+
+    decoded_samples = torch.stack(decoded_samples, dim=0)
+
+    # --------------------------------------------------
+    # Pixel-space uncertainty = variance of decoded samples
+    # --------------------------------------------------
+    uncertainty_map = decoded_samples.var(dim=0, unbiased=False)
+
+    # ==================================================
+    # Percentile normalization (visualization + metrics)
+    # ==================================================
+    def norm_percentile(x, pmin=1, pmax=99):
+        x = x.clone().to(torch.float32)
+        normed = torch.zeros_like(x)
+        for i in range(x.shape[0]):
+            lo = torch.quantile(x[i], pmin / 100.0)
+            hi = torch.quantile(x[i], pmax / 100.0)
+            x_i = torch.clamp(x[i], lo, hi)
+            normed[i] = (x_i - lo) / (hi - lo + 1e-8)
+        return normed
+
+    # ==================================================
+    # Metrics & logging
+    #
+    # Uncertainty is evaluated ONLY here, not during
+    # generation or decoding.
+    # ==================================================
+    ld = condition_dec.cpu().detach()
+    gt = gt_batch.cpu().detach()
+    pred = pred_denoised.cpu().detach()
+    unc = norm_percentile(uncertainty_map).cpu().detach()
+    error = norm_percentile(torch.abs(pred - gt))
+
+    fig, axes = plt.subplots(nrows=B, ncols=5, figsize=(8, 2.5 * B))
+    if B == 1:
+        axes = [axes]
+
+    for i in range(B):
+        images = [ld[i], gt[i], pred[i], unc[i], error[i]]
+        titles = ["T1", "T2", "Prediction", "Uncertainty", "Error"]
+
+        gt_array = gt[i][0].numpy()
+        pred_array = pred[i][0].numpy()
+
+        psnr = compute_psnr(
+            gt_array, pred_array,
+            data_range=gt_array.max() - gt_array.min()
+        )
+        ssim = compute_ssim(
+            gt_array, pred_array,
+            data_range=gt_array.max() - gt_array.min()
+        )
+        mse = np.mean((gt_array - pred_array) ** 2)
+
+        correlations_norm = map_correlations_multi_thresholds(
+            unc[i][0].numpy(), pred_array, gt_array)
+        correlations_unnorm = map_correlations_multi_thresholds(
+            uncertainty_map[i][0].cpu().detach().numpy(), pred_array, gt_array)
+
+        csv_writer.writerow({
+            'Sample': step * B + i,
+            'MSE': mse,
+            'PSNR': psnr,
+            'SSIM': ssim,
+            'Pearson_u_norm': correlations_norm["pearson"],
+            'Spearman_u_norm': correlations_norm["spearman"],
+            'AUROC_top15_u_norm': correlations_norm["AUROC_top15"],
+            'AUROC_top10_u_norm': correlations_norm["AUROC_top10"],
+            'AUROC_top5_u_norm': correlations_norm["AUROC_top5"],
+            'Pearson_u_unnorm': correlations_unnorm["pearson"],
+            'Spearman_u_unnorm': correlations_unnorm["spearman"],
+            'AUROC_top15_u_unnorm': correlations_unnorm["AUROC_top15"],
+            'AUROC_top10_u_unnorm': correlations_unnorm["AUROC_top10"],
+            'AUROC_top5_u_unnorm': correlations_unnorm["AUROC_top5"],
+        })
+
+        for j in range(5):
+            ax = axes[i][j]
+            ax.set_axis_off()
+            ax.set_title(titles[j])
+            img = images[j].squeeze(0).numpy()
+            ax.imshow(img, cmap='hot' if titles[j] in ["Uncertainty", "Error"] else 'gray')
+
+    plt.tight_layout()
+    writer.add_figure("Test/Inference_LDM_Uncertainty", plt.gcf(), global_step=step)
+    plt.close()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -280,9 +542,8 @@ if __name__ == '__main__':
     # Load the LDCT/HDCT dataset
     if args.task == "T1T2":
         dataset = T1T2Dataset(
-            annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_A.csv',
-            annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_B.csv',
-
+            annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_A_test.csv',
+            annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_B_test.csv',
         )
         scaling_factor = 9.404202
 
@@ -364,11 +625,10 @@ if __name__ == '__main__':
     )
 
     writer = SummaryWriter(comment=args.experiment_name)
-    csv_path = os.path.join(experiment_dir, f"{args.experiment_name}_image_space_uncertainty_metrics_epoch_{args.epoch}_train.csv")
-
+    csv_path = os.path.join(experiment_dir, f"{args.experiment_name}_image_space_uncertainty_metrics_epoch_{args.epoch}_MC_decoding.csv")
 
     with open(csv_path, mode='w', newline='') as csvfile:
-        fieldnames = ['Sample', 'MSE', 'PSNR', 'SSIM', 'Pearson', 'Spearman',  'AUROC_top15', 'AUROC_top10', 'AUROC_top5']
+        fieldnames = ['Sample', 'MSE', 'PSNR', 'SSIM', 'Pearson_u_norm', 'Spearman_u_norm', 'AUROC_top15_u_norm', 'AUROC_top10_u_norm', 'AUROC_top5_u_norm', 'Pearson_u_unnorm', 'Spearman_u_unnorm', 'AUROC_top15_u_unnorm', 'AUROC_top10_u_unnorm', 'AUROC_top5_u_unnorm']
         writer_csv = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer_csv.writeheader()
 
@@ -381,7 +641,7 @@ if __name__ == '__main__':
 
             img_A_latent = img_A_latent * scaling_factor
 
-            run_inference_and_log(
+            run_inference_and_log_uncertainty_propagation(
                 diffusion_model=diffusion,
                 autoencoder=autoencoder,
                 condition_batch=img_A_latent,

@@ -211,7 +211,7 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    experiment_dir = os.path.join(args.output_dir, args.experiment_name)
+    experiment_dir = os.path.join(f"{args.output_dir}/{args.task}", args.experiment_name)
     os.makedirs(experiment_dir, exist_ok=True)
     print(f"Checkpoint directory: {experiment_dir}")
 
@@ -375,6 +375,7 @@ if __name__ == '__main__':
             progress_bar.set_postfix({"loss": epoch_loss / (step + 1)})
 
             torch.cuda.empty_cache()
+
             """
             if step % 150 == 0:
                 run_inference(
@@ -391,6 +392,7 @@ if __name__ == '__main__':
 
                 )
             """
+
         writer.add_scalar('train/epoch_loss', epoch_loss / len(train_loader), epoch)
 
         if epoch % 50 == 0:
