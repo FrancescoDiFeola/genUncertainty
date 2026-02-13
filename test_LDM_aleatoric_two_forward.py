@@ -970,7 +970,7 @@ if __name__ == '__main__':
     )
 
     writer = SummaryWriter(comment=args.experiment_name)
-    csv_path = os.path.join(experiment_dir, f"{args.experiment_name}_metrics_ir_epoch_{args.epoch}_train.csv")
+    csv_path = os.path.join(experiment_dir, f"{args.experiment_name}_metrics_ir_epoch_{args.epoch}.csv")
 
     with open(csv_path, mode='w', newline='') as csvfile:
         fieldnames = ['Sample', 'MSE', 'PSNR', 'SSIM', 'Pearson_u_norm', 'Spearman_u_norm', 'AUROC_top15_u_norm', 'AUROC_top10_u_norm', 'AUROC_top5_u_norm', 'Pearson_u_unnorm', 'Spearman_u_unnorm', 'AUROC_top15_u_unnorm', 'AUROC_top10_u_unnorm', 'AUROC_top5_u_unnorm']

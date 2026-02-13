@@ -268,6 +268,10 @@ if __name__ == '__main__':
             output_size=256,
         )
 
+    elif args.task == "T1T2_Oasis":
+
+        dataset = Mri2DSlicedataset(args)
+
     train_loader = DataLoader(dataset=dataset,
                               batch_size=args.batch_size,
                               shuffle=True,
@@ -361,7 +365,7 @@ if __name__ == '__main__':
             progress_bar.set_postfix({"loss": epoch_loss / (step + 1)})
 
             torch.cuda.empty_cache()
-            if step % 500 == 0:
+            if step % 150 == 0:
                 sample_and_plot_batch_ddim_aleatoric(
                     diffusion_model=diffusion,
                     condition_batch=img_A,
@@ -376,7 +380,7 @@ if __name__ == '__main__':
 
         writer.add_scalar('train/epoch_loss', epoch_loss / len(train_loader), epoch)
 
-        if epoch % 50 == 0:
+        if epoch % 20 == 0:
             # Save the model after each epoch.
             current_epoch = epoch + args.epoch_start
             torch.save(diffusion.state_dict(), os.path.join(experiment_dir, f'diffusion-ep-{current_epoch}.pth'))

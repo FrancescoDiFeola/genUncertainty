@@ -4,8 +4,8 @@ import csv
 # ------------------------------------------------------
 # Configuration
 # ------------------------------------------------------
-DATASET_ROOT = "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/Task1/pelvis/train"   # <-- change this
-OUTPUT_CSV = "mr_ct_dataset_train.csv"
+DATASET_ROOT = "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/Task1/pelvis/test"   # <-- change this
+OUTPUT_CSV = "mr_ct_dataset_test.csv"
 
 MR_PREFIXES = ("mr_", "MR_")
 CT_PREFIXES = ("ct_", "CT_")

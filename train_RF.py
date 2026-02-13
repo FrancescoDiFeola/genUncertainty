@@ -225,6 +225,10 @@ if __name__ == '__main__':
             output_size=256,
         )
 
+    elif args.task == "T1T2_Oasis":
+
+        dataset = Mri2DSlicedataset(args)
+
     train_loader = DataLoader(dataset=dataset,
                               batch_size=args.batch_size,
                               shuffle=True,

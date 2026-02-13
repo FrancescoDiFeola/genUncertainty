@@ -97,9 +97,8 @@ if __name__ == "__main__":
     )
     """
 
-    """
-    dataset = T1T2Dataset("/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/src/VAE/csvs/T1T2_train.csv")
-    """
+    # dataset = T1T2Dataset("/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/src/VAE/csvs/T1T2_train.csv")
+
     # opt = TrainOptions()
 
     # dataset = CTPETDataset(opt)
@@ -131,6 +130,7 @@ if __name__ == "__main__":
             #paths = [batch_paths[i] for i in valid_indices]
 
             # Inferenza (Float32)
+            print(inputs.shape)
             _, latents, _ = autoencoder(inputs)  # Output: [Batch, 3, 16, 16, 16]
             print(f"Latents shape: {latents.shape}")
 

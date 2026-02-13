@@ -252,6 +252,8 @@ if __name__ == '__main__':
             csv_path= "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/mr_ct_dataset_train.csv",
             output_size=256,
         )
+    elif args.task == "T1T2_Oasis":
+        dataset = Mri2DSlicedataset(args)
 
     train_loader = DataLoader(dataset=dataset,
                               batch_size=args.batch_size,
@@ -355,7 +357,7 @@ if __name__ == '__main__':
 
         writer.add_scalar('train/epoch_loss', epoch_loss / len(train_loader), epoch)
 
-        if epoch % 50 == 0:
+        if epoch % 20 == 0:
             # Save the model after each epoch.
             torch.save(diffusion.state_dict(), os.path.join(experiment_dir, f'diffusion-ep-{epoch+args.epoch_start}.pth'))
 

@@ -1,6 +1,6 @@
 import matplotlib
 matplotlib.use("TkAgg")  # important on macOS before importing pyplot
-
+from src.inference.utils import compute_aurg, compute_ause
 import pandas as pd
 import matplotlib.pyplot as plt
 
@@ -40,7 +40,7 @@ plt.show()
 import pandas as pd
 import matplotlib.pyplot as plt
 
-df = pd.read_csv("/Users/francescodifeola/Desktop/omega/uncertainty/results/T1T2/LDM/baseline/metrics_epoch_300.csv")
+df = pd.read_csv("/Users/francescodifeola/Desktop/omega/uncertainty/results/denoising/DDPM/baseline/metrics_epoch_300.csv")
 
 mse = (df["MSE"].mean(), df["MSE"].std())
 psnr = (df["PSNR"].mean(), df["PSNR"].std())
@@ -182,18 +182,18 @@ import numpy as np
 # CONFIG
 # ============================================================
 
-ROOT_DIR = "/Users/francescodifeola/Desktop/omega/uncertainty/results/T1T2/untitled folder"   # <-- change this
-OUTPUT_CSV = "summary_metrics.csv"
+ROOT_DIR = "/Users/francescodifeola/Desktop/omega/uncertainty/results/denoising/FM/baseline"   # <-- change this
+OUTPUT_CSV = "/Users/francescodifeola/Desktop/omega/uncertainty/results/denoising/FM/summary_metrics.csv"
 
 METRICS = [
     "MSE",
     "PSNR",
     "SSIM",
-    "Pearson",
-    "Spearman",
-    "AUROC_top15",
-    "AUROC_top10",
-    "AUROC_top5",
+    "Pearson_u_norm",
+    "Spearman_u_norm",
+    "AUROC_top15_u_norm",
+    "AUROC_top10_u_norm",
+    "AUROC_top5_u_norm",
 ]
 
 # ============================================================
@@ -257,3 +257,37 @@ summary_df.to_csv(OUTPUT_CSV, index=False)
 print("\n===== SUMMARY TABLE =====\n")
 print(summary_df)
 print(f"\nSaved to {OUTPUT_CSV}")
+
+
+df = pd.read_csv("/Users/francescodifeola/Desktop/omega/uncertainty/results/T1T2/LFM/self_refinement_k10/metrics_epoch_50_K10_ablation_only_small_perturb.csv")
+
+
+###############################
+import pandas as pd
+
+df = pd.read_csv("sparsification_results.csv")
+
+for method in df['Method'].unique():
+    df_m = df[df['Method'] == method]
+    grouped = df_m.groupby('Fraction').mean()
+
+    fractions = grouped.index.values
+    mean_curve = grouped['Error'].values
+    mean_random = grouped['RandomError'].values
+
+    ause = compute_ause(fractions, mean_curve)
+    aurg = compute_aurg(fractions, mean_curve, mean_random)
+
+    print(method, "AUSE:", ause, "AURG:", aurg)
+
+# plt.figure()
+
+# plt.plot(fractions, mean_curve_refine, label="REFINE")
+# plt.plot(fractions, mean_curve_mc, label="MC-Sampling")
+# plt.plot(fractions, mean_random, linestyle='--', label="Random")
+
+# plt.xlabel("Fraction of removed pixels")
+# plt.ylabel("Remaining L1 Error")
+# plt.legend()
+# plt.grid(True)
+# plt.show()

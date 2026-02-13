@@ -273,6 +273,9 @@ def train_autoencoder(opt):
     elif opt.task == "CTPET":
         dataset = CTPETDataset(opt)
 
+    elif opt.task == "T1T2_Oasis":
+        dataset = CTPETDataset(opt)
+
     train_loader = DataLoader(dataset=dataset,
                               batch_size=opt.batchSize,
                               shuffle=True,
@@ -360,7 +363,7 @@ def train_autoencoder(opt):
     #avgloss = utils.AverageLoss()
     #total_counter = 0  # print(f"TensorBoard logging directory: {writer.log_dir}")
     #checkpoint_dir = "/mimer/NOBACKUP/groups/naiss2023-6-336/lcarusone/TESI_MAGISTRALE/src/VAE/checkpoints"
-    checkpoint_dir = "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/CTPET/VAE"
+    checkpoint_dir = "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/T1T2_Oasis/VAE"
 
 
     # **Load Checkpoints from checkpoint.py**

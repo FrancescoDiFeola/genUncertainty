@@ -862,8 +862,8 @@ if __name__ == '__main__':
     scheduler.set_timesteps(num_inference_steps=30, device=DEVICE, input_img_size_numel=256*256)
 
     writer = SummaryWriter(comment=args.experiment_name)
-    csv_path = os.path.join(experiment_dir, f"{args.experiment_name}_metrics_iterative_refinement_without_twoforward_epoch_{args.epoch}_image_uncertainty_K_10.csv")
-    csv_path_2 = os.path.join(experiment_dir, f"{args.experiment_name}_metrics_iterative_refinement_without_twoforward_epoch_{args.epoch}_uncertainty_calibration_K_10.csv")
+    csv_path = os.path.join(experiment_dir, f"{args.experiment_name}_metrics_iterative_refinement_without_twoforward_epoch_{args.epoch}_image_uncertainty_K_30_train.csv")
+    csv_path_2 = os.path.join(experiment_dir, f"{args.experiment_name}_metrics_iterative_refinement_without_twoforward_epoch_{args.epoch}_uncertainty_calibration_K_30_train.csv")
 
     # open both CSV files at the same time and keep them open during inference
     with open(csv_path, mode='w', newline='') as csvfile, \

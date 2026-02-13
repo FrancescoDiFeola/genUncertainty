@@ -4,10 +4,11 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 from monai.utils import set_determinism
-from generative.networks.schedulers import DDIMScheduler
+from torchvision import transforms
+from monai.networks.schedulers import RFlowScheduler
+from monai.networks.nets.autoencoderkl import AutoencoderKL
 from tqdm import tqdm
 import numpy as np
-from torchvision import transforms
 import matplotlib.pyplot as plt
 import csv
 from skimage.metrics import peak_signal_noise_ratio as compute_psnr, structural_similarity as compute_ssim
@@ -16,11 +17,10 @@ from src.brlp.ldct_hdct_dataset import LDCTHDCTDataset
 from src.brlp.Mri2DSlice_dataset import Mri2DSlicedataset
 from src.brlp.ND_dataset import PairedImageDataset
 from src.brlp.CS_dataset import CityscapesColorDataset
-from src.brlp.MR_to_CT import MRCTPaired
 from src.brlp import networks
+from src.VAE.utils.checkpoints_utils import load_checkpoint
 from sklearn.metrics import roc_auc_score
 from scipy.stats import pearsonr, spearmanr
-
 
 # -----------------------
 # ✅ Set environment
@@ -87,73 +87,36 @@ def map_correlations_multi_thresholds(unc_map, pred, gt, percentiles=(95, 90, 85
     return results
 
 @torch.no_grad()
-def collect_calibration_data(
-    unc_map: torch.Tensor,
-    err_map: torch.Tensor,
-    num_bins: int = 15,  # number of callibration bins
-):
-    """
-    Collect per-bin statistics for calibration (ECE / reliability).
-
-    Args:
-        unc_map: (H, W) uncertainty (std or variance, NOT normalized)
-        err_map: (H, W) absolute error
-    Returns:
-        bin_unc_mean, bin_err_mean, bin_count
-    """
-    u = unc_map.flatten()
-    e = err_map.flatten()
-
-    mask = torch.isfinite(u) & torch.isfinite(e)
-    u = u[mask]
-    e = e[mask]
-
-    # Define bins over uncertainty  [q1, q2, ...., q15], Each bin contains roughly the same number of pixels, bobust to heavy-tailed uncertainty distributions, Prevents empty bins, standard in the literature
-    bins = torch.quantile(u, torch.linspace(0, 1, num_bins + 1, device=u.device))
-    bin_ids = torch.bucketize(u, bins[1:-1]) # assign each pixel to a bin
-
-    bin_unc_mean = []
-    bin_err_mean = []
-    bin_count = []
-
-    for b in range(num_bins):
-        idx = bin_ids == b
-        if idx.sum() == 0:
-            continue
-        bin_unc_mean.append(u[idx].mean().item()) # map the predicted uncertaintu in the bin, Average model-predicted uncertainty for pixels in bin b.
-        bin_err_mean.append(e[idx].mean().item()) # Average actual reconstruction error for the same pixels.
-        bin_count.append(idx.sum().item())
-
-    return bin_unc_mean, bin_err_mean, bin_count
-
-@torch.no_grad()
 def run_inference_and_log(
         diffusion_model,
+        autoencoder,
         condition_batch,
         gt_batch,
         writer,
         step,
         device,
         scheduler,
+        scaling,
         csv_writer
 ):
     diffusion_model.eval()
     B, C, H, W = condition_batch.shape
 
-    scheduler.set_timesteps(50)
-    scheduler.alphas_cumprod = scheduler.alphas_cumprod.to(device)
     x = torch.randn_like(condition_batch).to(device)
     condition_batch = condition_batch.to(device)
     gt_batch = gt_batch.to(device)
 
-    for t in tqdm(scheduler.timesteps, desc="DDIM Sampling"):
+    all_next_timesteps = torch.cat((scheduler.timesteps[1:], torch.tensor([0], dtype=scheduler.timesteps.dtype, device=scheduler.timesteps.device)))
+    for i, (t, next_t) in enumerate(tqdm(zip(scheduler.timesteps, all_next_timesteps), total=min(len(scheduler.timesteps), len(all_next_timesteps)), )):
         t_tensor = torch.tensor([t], device=device).long()
         model_input = torch.cat([x, condition_batch], dim=1)
-        pred_noise = diffusion_model(x=model_input, timesteps=t_tensor, context=None)
-        x, _ = scheduler.step(pred_noise, t_tensor, x)
+        predicted_velocity = diffusion_model(x=model_input, timesteps=t_tensor, context=None)
+        x, _ = scheduler.step(predicted_velocity, t, x, next_t)
 
+    pred_denoised_latent = x
 
-    pred_denoised = x
+    pred_denoised = autoencoder.decode(pred_denoised_latent/scaling)
+    condition_batch = autoencoder.decode(condition_batch/scaling)
 
     def norm_percentile(x, pmin=1, pmax=99):
         x = x.clone().to(torch.float32)
@@ -204,23 +167,23 @@ def run_inference_and_log(
     writer.add_figure("Test/Inference", plt.gcf(), global_step=step)
     plt.close()
 
+
 @torch.no_grad()
 def run_inference_and_log_MC_sampling(
         diffusion_model,
+        autoencoder,
         condition_batch,
         gt_batch,
         writer,
         step,
         device,
         scheduler,
+        scaling,
         csv_writer,
-        csv_writer_2,
 ):
     diffusion_model.eval()
     B, C, H, W = condition_batch.shape
 
-    scheduler.set_timesteps(50)
-    scheduler.alphas_cumprod = scheduler.alphas_cumprod.to(device)
 
     x = torch.randn_like(condition_batch).to(device)
     condition_batch = condition_batch.to(device)
@@ -238,20 +201,21 @@ def run_inference_and_log_MC_sampling(
     # --------------------------------------------------
     for s in range(S):
         x = torch.randn_like(condition_batch)
-
-        for t in scheduler.timesteps:
+        all_next_timesteps = torch.cat((scheduler.timesteps[1:], torch.tensor([0], dtype=scheduler.timesteps.dtype, device=scheduler.timesteps.device)))
+        for i, (t, next_t) in enumerate(tqdm(zip(scheduler.timesteps, all_next_timesteps), total=min(len(scheduler.timesteps), len(all_next_timesteps)), )):
             t_tensor = torch.tensor([t], device=device).long()
             model_input = torch.cat([x, condition_batch], dim=1)
 
-            pred_noise = diffusion_model(
+            predicted_velocity = diffusion_model(
                 x=model_input,
                 timesteps=t_tensor,
                 context=None
             )
 
-            x, _ = scheduler.step(pred_noise, t_tensor, x)
+            x, _ = scheduler.step(predicted_velocity,  t, x, next_t)
 
         # pred_denoised = x
+        x = autoencoder.decode(x / scaling)
         samples.append(x.cpu())
 
     samples = torch.stack(samples, dim=0)  # (S, B, C, H, W)
@@ -280,6 +244,7 @@ def run_inference_and_log_MC_sampling(
     # --------------------------------------------------
     # Metrics & logging
     # --------------------------------------------------
+    condition_batch = autoencoder.decode(condition_batch / scaling)
     ld = condition_batch.cpu()
     gt = gt_batch.cpu()
     pred = pred_denoised.cpu()
@@ -296,29 +261,6 @@ def run_inference_and_log_MC_sampling(
 
         gt_array = gt[i][0].numpy()
         pred_array = pred[i][0].numpy()
-
-
-        # --- Calibration data ---
-        unc_raw = mc_uncertainty_map[i][0].cpu()
-        err_raw = (pred[i][0] - gt[i][0]).abs()
-
-        bin_u, bin_e, bin_n = collect_calibration_data(
-            unc_raw,
-            err_raw,
-            num_bins=15
-        )
-
-        # Log per-bin values for later plotting
-        for k in range(len(bin_u)):
-            csv_writer_2.writerow({
-                'Sample': step * B + i,
-                'Bin': k,
-                'Unc_mean': bin_u[k],
-                'Err_mean': bin_e[k],
-                'Count': bin_n[k],
-                'Type': 'calibration'
-            })
-
 
         psnr = compute_psnr(
             gt_array, pred_array,
@@ -362,11 +304,12 @@ def run_inference_and_log_MC_sampling(
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset_csv', type=str, required=False)
-    parser.add_argument('--output_dir', type=str,default="/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/", required=False)
+    parser.add_argument('--output_dir', type=str, default="/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/", required=False)
     parser.add_argument('--diff_ckpt', type=str, required=False)
-    parser.add_argument('--task', required=True, type=str)
+    parser.add_argument('--VAE_ckpt', default=None, type=str)
     parser.add_argument('--epoch', default=None, type=str)
     parser.add_argument('--experiment_name', type=str, required=True)
+    parser.add_argument('--task', required=True, type=str)
     parser.add_argument('--batch_size', default=1, type=int)
     parser.add_argument('--num_workers', default=4, type=int)
     parser.add_argument('--in_ch', default=2, type=int)
@@ -385,17 +328,21 @@ if __name__ == '__main__':
     os.makedirs(experiment_dir, exist_ok=True)
     print(f"Checkpoint directory: {experiment_dir}")
 
+
     args.diff_ckpt = os.path.join(experiment_dir, f"diffusion-ep-{args.epoch}.pth")
+    args.VAE_ckpt = os.path.join(args.output_dir, args.task, "VAE")
 
     # -----------------------
     # ✅ Load dataset
     # -----------------------
+    scaling_factor = 1
     # Load the LDCT/HDCT dataset
     if args.task == "T1T2":
         dataset = T1T2Dataset(
             annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_A_test.csv',
             annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_B_test.csv',
         )
+        scaling_factor = 9.404202
 
     elif args.task == "CS":
         transform = transforms.Compose([
@@ -417,7 +364,7 @@ if __name__ == '__main__':
         ])
 
         dataset = PairedImageDataset(
-            csv_path="test.csv",
+            csv_path="train.csv",
             root_dir="/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/ND_dataset",
             transform_A=transform,
             transform_B=transform
@@ -431,66 +378,91 @@ if __name__ == '__main__':
             annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D2/annotations_test_lowdose_GAN_D2_nuovo_ordinato.csv',
             annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D2/annotations_test_fulldose_GAN_D2_nuovo_ordinato.csv',
         )
+        scaling_factor = 7.832608
 
-    elif args.task == "MRtoCT":
+    loader = DataLoader(dataset,
+                        batch_size=args.batch_size,
+                        shuffle=False,
+                        num_workers=args.num_workers)
 
-        dataset = MRCTPaired(
-            csv_path= "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/mr_ct_dataset_test.csv",
-            output_size=256,
-        )
-    
-    loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
+    # -----------------------
+    # ✅ Load autoencoder
+    # -----------------------
+    autoencoder = AutoencoderKL(
+        spatial_dims=2,
+        in_channels=1,
+        out_channels=1,
+        channels=(128, 128, 256),
+        latent_channels=3,
+        num_res_blocks=2,
+        attention_levels=(False, False, False),
+        with_encoder_nonlocal_attn=False,
+        with_decoder_nonlocal_attn=False,
+    )
+    autoencoder = autoencoder.to(DEVICE)
+
+    # **Load Checkpoints from checkpoint.py**
+    _ = load_checkpoint(autoencoder, optimizer=None, checkpoint_dir=args.VAE_ckpt, model_name="autoencoder")
+    autoencoder.eval()
+
     diffusion = networks.init_ddpm(args.in_ch, args.out_ch, args.diff_ckpt).to(DEVICE)
 
     if NUM_GPUS > 1:
         diffusion = torch.nn.DataParallel(diffusion)
+        autoencoder = torch.nn.DataParallel(autoencoder)
 
-    scheduler = DDIMScheduler(
+    scheduler = RFlowScheduler(
         num_train_timesteps=1000,
-        beta_start=0.0015,
-        beta_end=0.0205,
-        schedule="scaled_linear_beta",
-        clip_sample=False,
+        use_discrete_timesteps=False,  # impostato a False nel codice di MAISI
+        sample_method='uniform',  # impostato come in MAISI
+        use_timestep_transform=True,
+        base_img_size_numel=64*64,
+        spatial_dim=2
     )
+
+    scheduler.set_timesteps(num_inference_steps=30, device=DEVICE, input_img_size_numel=64*64)
 
     writer = SummaryWriter(comment=args.experiment_name)
 
     if args.MC_sampling:
 
-        csv_path = os.path.join(experiment_dir, f"{args.experiment_name}_metrics_epoch_{args.epoch}_image_uncertainty_MC_sampling.csv")
-        csv_path_2 = os.path.join(experiment_dir, f"{args.experiment_name}_metrics_epoch_{args.epoch}_uncertainty_calibration_MC_sampling.csv")
+        csv_path = os.path.join(experiment_dir, f"{args.experiment_name}_metrics_epoch_{args.epoch}_image_uncertainty.csv")
 
         # open both CSV files at the same time and keep them open during inference
-        with open(csv_path, mode='w', newline='') as csvfile, \
-                open(csv_path_2, mode='w', newline='') as csvfile_2:
+        with open(csv_path, mode='w', newline='') as csvfile:
 
             # metrics CSV
-            fieldnames = ['Sample', 'MSE', 'PSNR', 'SSIM', 'Pearson_u_norm', 'Spearman_u_norm',  'AUROC_top15_u_norm', 'AUROC_top10_u_norm', 'AUROC_top5_u_norm', 'Pearson_u_unnorm', 'Spearman_u_unnorm',  'AUROC_top15_u_unnorm', 'AUROC_top10_u_unnorm', 'AUROC_top5_u_unnorm']
+            fieldnames = ['Sample', 'MSE', 'PSNR', 'SSIM', 'Pearson_u_norm', 'Spearman_u_norm', 'AUROC_top15_u_norm', 'AUROC_top10_u_norm', 'AUROC_top5_u_norm', 'Pearson_u_unnorm', 'Spearman_u_unnorm', 'AUROC_top15_u_unnorm', 'AUROC_top10_u_unnorm', 'AUROC_top5_u_unnorm']
             writer_csv = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer_csv.writeheader()
 
-            # calibration CSV
-            fieldnames_2 = ['Sample', 'Bin', 'Unc_mean', 'Err_mean', 'Count', 'Type']
-            writer_csv_2 = csv.DictWriter(csvfile_2, fieldnames=fieldnames_2)
-            writer_csv_2.writeheader()
-
             for step, batch in enumerate(loader):
+                img_A = batch["A"].to(DEVICE)
+                img_B = batch["B"].to(DEVICE)
+
+                with torch.no_grad():
+                    _, img_A_latent, _ = autoencoder(img_A)
+
+                img_A_latent = img_A_latent * scaling_factor
+
                 run_inference_and_log_MC_sampling(
                     diffusion_model=diffusion,
-                    condition_batch=batch['A'],
-                    gt_batch=batch['B'],
+                    autoencoder=autoencoder,
+                    condition_batch=img_A_latent,
+                    gt_batch=img_B,
                     writer=writer,
                     step=step,
                     device=DEVICE,
                     scheduler=scheduler,
-                    csv_writer=writer_csv,
-                    csv_writer_2=writer_csv_2
+                    scaling=scaling_factor,
+                    csv_writer=writer_csv
                 )
 
         print(f"✅ Inference complete. Metrics saved to {csv_path}")
+
     else:
 
-        csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}.csv")
+        csv_path = os.path.join(experiment_dir, f"{args.experiment_name}_metrics_epoch_{args.epoch}.csv")
 
         with open(csv_path, mode='w', newline='') as csvfile:
             fieldnames = ['Sample', 'MSE', 'PSNR', 'SSIM']
@@ -498,16 +470,25 @@ if __name__ == '__main__':
             writer_csv.writeheader()
 
             for step, batch in enumerate(loader):
+                img_A = batch["A"].to(DEVICE)
+                img_B = batch["B"].to(DEVICE)
+
+                with torch.no_grad():
+                    _, img_A_latent, _ = autoencoder(img_A)
+
+                img_A_latent = img_A_latent * scaling_factor
+
                 run_inference_and_log(
                     diffusion_model=diffusion,
-                    condition_batch=batch['A'],
-                    gt_batch=batch['B'],
+                    autoencoder=autoencoder,
+                    condition_batch=img_A_latent,
+                    gt_batch=img_B,
                     writer=writer,
                     step=step,
                     device=DEVICE,
                     scheduler=scheduler,
+                    scaling=scaling_factor,
                     csv_writer=writer_csv
                 )
 
         print(f"✅ Inference complete. Metrics saved to {csv_path}")
-

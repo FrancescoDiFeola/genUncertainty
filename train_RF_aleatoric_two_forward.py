@@ -195,6 +195,7 @@ if __name__ == '__main__':
     parser.add_argument('--annotation_B', required=False, type=str)
     parser.add_argument('--num_workers', default=8, type=int)
     parser.add_argument('--n_epochs', default=5000, type=int)
+    parser.add_argument('--epoch_start', default=0, type=int)
     parser.add_argument('--batch_size', default=16, type=int)
     parser.add_argument('--lr', default=1.5e-5, type=float)
     parser.add_argument('--diff_loss_weight', type=float, default=1.0)
@@ -215,6 +216,9 @@ if __name__ == '__main__':
     os.makedirs(experiment_dir, exist_ok=True)
     print(f"Checkpoint directory: {experiment_dir}")
 
+    # args.diff_ckpt = os.path.join(experiment_dir, f"diffusion-ep-{args.epoch_start}.pth")
+    # args.context_ckpt = os.path.join(experiment_dir, f"spatial_encoder-ep-{args.epoch_start}.pth")
+    # print(args.diff_ckpt, args.context_ckpt)
     # -----------------------
     # ✅ Load dataset
     # -----------------------
@@ -268,6 +272,10 @@ if __name__ == '__main__':
             csv_path= "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/mr_ct_dataset_train.csv",
             output_size=256,
         )
+
+    elif args.task == "T1T2_Oasis":
+
+        dataset = Mri2DSlicedataset(args)
 
     train_loader = DataLoader(dataset=dataset,
                               batch_size=args.batch_size,
@@ -395,9 +403,11 @@ if __name__ == '__main__':
 
         writer.add_scalar('train/epoch_loss', epoch_loss / len(train_loader), epoch)
 
-        if epoch % 50 == 0:
+        if epoch % 20 == 0:
             # Save the model after each epoch.
-            torch.save(diffusion.state_dict(), os.path.join(experiment_dir, f'diffusion-ep-{epoch}.pth'))
-            torch.save(spatial_encoder.state_dict(), os.path.join(experiment_dir, f'spatial_encoder-ep-{epoch}.pth'))
+            save_epoch = epoch + args.epoch_start
+            # Save the model after each epoch.
+            torch.save(diffusion.state_dict(), os.path.join(experiment_dir, f'diffusion-ep-{save_epoch}.pth'))
+            torch.save(spatial_encoder.state_dict(), os.path.join(experiment_dir, f'spatial_encoder-ep-{save_epoch}.pth'))
 
     print("Training complete.")

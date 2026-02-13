@@ -140,7 +140,7 @@ class CTPETDataset(Dataset):
         )
 
         if opt.under_sample_dataset:
-            self.samples = [x for i, x in enumerate(self.samples) if (i + 1) % 3 != 0]
+            self.samples = [x for i, x in enumerate(self.samples) if (i + 1) % 3 == 1]  # CTPET (i + 1) % 3 != 0
 
         if opt.phase is not None:
             train_samples, test_samples = split_train_test(self.samples, test_size=0.2)

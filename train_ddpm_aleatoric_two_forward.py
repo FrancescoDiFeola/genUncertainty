@@ -318,7 +318,7 @@ if __name__ == '__main__':
     parser.add_argument('--annotation_A', required=False, type=str)
     parser.add_argument('--annotation_B', required=False, type=str)
     parser.add_argument('--num_workers', default=8, type=int)
-    parser.add_argument('--epoch_start', default=0, type=float)
+    parser.add_argument('--epoch_start', default=0, type=int)
     parser.add_argument('--n_epochs', default=305, type=int)
     parser.add_argument('--batch_size', default=16, type=int)
     parser.add_argument('--lr', default=1.5e-5, type=float)
@@ -340,7 +340,7 @@ if __name__ == '__main__':
 
     # args.diff_ckpt = os.path.join(experiment_dir, f"diffusion-ep-{args.epoch_start}.pth")
     # args.context_ckpt = os.path.join(experiment_dir, f"spatial_encoder-ep-{args.epoch_start}.pth")
-
+    # print(args.diff_ckpt, args.context_ckpt)
     # -----------------------
     # ✅ Load dataset
     # -----------------------
@@ -394,6 +394,9 @@ if __name__ == '__main__':
             csv_path= "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/mr_ct_dataset_train.csv",
             output_size=256,
         )
+
+    elif args.task == "T1T2_Oasis":
+        dataset = Mri2DSlicedataset(args)
 
     train_loader = DataLoader(dataset=dataset,
                               batch_size=args.batch_size,
@@ -460,7 +463,7 @@ if __name__ == '__main__':
             noise = torch.randn_like(img_B)
             timesteps = torch.randint(0, scheduler.num_train_timesteps, (img_B.size(0),), device=DEVICE).long()
 
-            # === First Forward: Estimate uncertainty map without cross-attention ===
+            # ================== First Forward: Estimate uncertainty map without cross-attention =======================
             with torch.no_grad():
                 dummy_context = torch.zeros((args.batch_size, 1, 128), device=DEVICE)
                 pred_mean_var, _ = inferer(
