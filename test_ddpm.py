@@ -1,16 +1,9 @@
-import os
 import argparse
-import torch
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 from monai.utils import set_determinism
 from generative.networks.schedulers import DDIMScheduler
-from tqdm import tqdm
-import numpy as np
 from torchvision import transforms
-import matplotlib.pyplot as plt
-import csv
-from skimage.metrics import peak_signal_noise_ratio as compute_psnr, structural_similarity as compute_ssim
 from src.brlp.T1_T2_dataset import T1T2Dataset
 from src.brlp.ldct_hdct_dataset import LDCTHDCTDataset
 from src.brlp.Mri2DSlice_dataset import Mri2DSlicedataset
@@ -18,8 +11,6 @@ from src.brlp.ND_dataset import PairedImageDataset
 from src.brlp.CS_dataset import CityscapesColorDataset
 from src.brlp.MR_to_CT import MRCTPaired
 from src.brlp import networks
-from sklearn.metrics import roc_auc_score
-from scipy.stats import pearsonr, spearmanr
 from src.inference.inference_ddpm import *
 from src.inference.utils import initialize_writers
 
@@ -135,8 +126,8 @@ if __name__ == '__main__':
 
     elif args.analysis == "both":
 
-        csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_image_uncertainty_train.csv")
-        csv_path_2 = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_uncertainty_calibration_train.csv")
+        csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_image_uncertainty_MC_sampling_train.csv")
+        csv_path_2 = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_uncertainty_calibration_MC_sampling_train.csv")
         writer_ = initialize_writers(csv_path, csv_path_2, writer_type=args.analysis)
         writer_csv = writer_[2]
         writer_csv_2 = writer_[3]
@@ -147,7 +138,6 @@ if __name__ == '__main__':
         writer_csv = initialize_writers(csv_path, writer_type=args.analysis)[1]
 
     if args.MC_sampling:
-
 
             for step, batch in enumerate(loader):
 
