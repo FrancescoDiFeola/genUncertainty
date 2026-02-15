@@ -1,17 +1,10 @@
-import os
 import argparse
-import torch
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 from monai.utils import set_determinism
 from torchvision import transforms
 from generative.networks.schedulers import DDIMScheduler
 from monai.networks.nets.autoencoderkl import AutoencoderKL
-from tqdm import tqdm
-import numpy as np
-import matplotlib.pyplot as plt
-import csv
-from skimage.metrics import peak_signal_noise_ratio as compute_psnr, structural_similarity as compute_ssim
 from src.brlp.T1_T2_dataset import T1T2Dataset
 from src.brlp.ldct_hdct_dataset import LDCTHDCTDataset
 from src.brlp.Mri2DSlice_dataset import Mri2DSlicedataset
@@ -19,8 +12,8 @@ from src.brlp.ND_dataset import PairedImageDataset
 from src.brlp.CS_dataset import CityscapesColorDataset
 from src.brlp import networks
 from src.VAE.utils.checkpoints_utils import load_checkpoint
-from sklearn.metrics import roc_auc_score
-from scipy.stats import pearsonr, spearmanr
+from src.inference.inference_LDM import *
+from src.inference.utils import initialize_writers
 
 # -----------------------
 # ✅ Set environment
@@ -29,62 +22,6 @@ set_determinism(0)
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 NUM_GPUS = torch.cuda.device_count()
 
-def map_correlations_multi_thresholds(unc_map, pred, gt, percentiles=(95, 90, 85)):
-    """
-    Compute correlation and failure-discrimination metrics between uncertainty and error maps.
-
-    For each percentile p:
-      - define failure pixels as top (100 - p)% highest-error pixels
-      - compute AUROC of uncertainty predicting failure
-
-    Args:
-        unc_map (np.ndarray): uncertainty map (H, W) or (C, H, W)
-        pred (np.ndarray): prediction
-        gt (np.ndarray): ground truth
-        percentiles (tuple): percentiles defining error thresholds
-                             (95 -> top 5%, 90 -> top 10%, etc.)
-
-    Returns:
-        results (dict): dictionary with:
-            - pearson
-            - spearman
-            - auroc_top_5
-            - auroc_top_10
-            - auroc_top_15
-    """
-
-    # --- error map ---
-    err = np.abs(pred - gt)
-
-    # flatten
-    u = unc_map.flatten()
-    e = err.flatten()
-
-    # remove NaN / Inf
-    mask = np.isfinite(u) & np.isfinite(e)
-    u = u[mask]
-    e = e[mask]
-
-    results = {}
-
-    # --- global correlations ---
-    results["pearson"] = pearsonr(u, e)[0]
-    results["spearman"] = spearmanr(u, e)[0]
-
-    # --- failure discrimination at multiple thresholds ---
-    for p in percentiles:
-        err_thresh = np.percentile(e, p)
-        err_bin = (e > err_thresh).astype(np.int32)
-
-        # AUROC is only valid if both classes exist
-        if len(np.unique(err_bin)) > 1:
-            auroc = roc_auc_score(err_bin, u)
-        else:
-            auroc = np.nan
-
-        results[f"AUROC_top{100-p}"] = auroc
-
-    return results
 
 @torch.no_grad()
 def run_inference_and_log(
@@ -315,6 +252,7 @@ if __name__ == '__main__':
     parser.add_argument('--epoch', default=None, type=str)
     parser.add_argument('--experiment_name', type=str, required=True)
     parser.add_argument('--task', required=True, type=str)
+    parser.add_argument('--analysis', type=str, required=False)
     parser.add_argument('--batch_size', default=1, type=int)
     parser.add_argument('--num_workers', default=4, type=int)
     parser.add_argument('--in_ch', default=2, type=int)
@@ -427,28 +365,49 @@ if __name__ == '__main__':
     writer = SummaryWriter(comment=args.experiment_name)
 
 
+    if args.analysis == "sparsification":
+
+        csv_path = os.path.join(experiment_dir, f"sparsification_epoch_{args.epoch}.csv")
+        writer_csv = initialize_writers(csv_path, writer_type=args.analysis)[1]
+
+    elif args.analysis == "metrics":
+
+        csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_image_uncertainty_train.csv")
+        writer_csv = initialize_writers(csv_path, writer_type=args.analysis)
+
+    elif args.analysis == "metrics_v1":
+
+        csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}.csv")
+        writer_csv = initialize_writers(csv_path, writer_type=args.analysis)[1]
+
+
     if args.MC_sampling:
 
-        csv_path = os.path.join(experiment_dir, f"{args.experiment_name}_metrics_epoch_{args.epoch}_image_uncertainty_MC_sampling.csv")
+        for step, batch in tqdm(enumerate(loader)):
+            img_A = batch["A"].to(DEVICE)
+            img_B = batch["B"].to(DEVICE)
 
-        # open both CSV files at the same time and keep them open during inference
-        with open(csv_path, mode='w', newline='') as csvfile:
+            with torch.no_grad():
+                _, img_A_latent, _ = autoencoder(img_A)
 
-            # metrics CSV
-            fieldnames = ['Sample', 'MSE', 'PSNR', 'SSIM', 'Pearson_u_norm', 'Spearman_u_norm', 'AUROC_top15_u_norm', 'AUROC_top10_u_norm', 'AUROC_top5_u_norm', 'Pearson_u_unnorm', 'Spearman_u_unnorm', 'AUROC_top15_u_unnorm', 'AUROC_top10_u_unnorm', 'AUROC_top5_u_unnorm']
-            writer_csv = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            writer_csv.writeheader()
+            img_A_latent = img_A_latent * scaling_factor
 
-            for step, batch in tqdm(enumerate(loader)):
-                img_A = batch["A"].to(DEVICE)
-                img_B = batch["B"].to(DEVICE)
+            if args.analysis == "sparsification":
 
-                with torch.no_grad():
-                    _, img_A_latent, _ = autoencoder(img_A)
+                run_inference_LDM_vanilla_and_log_MC_sampling_sparsification(
+                    diffusion_model=diffusion,
+                    autoencoder=autoencoder,
+                    condition_batch=img_A_latent,
+                    gt_batch=img_B,
+                    step=step,
+                    device=DEVICE,
+                    scheduler=scheduler,
+                    scaling=scaling_factor,
+                    csv_writer=writer_csv
+                )
 
-                img_A_latent = img_A_latent * scaling_factor
-
-                run_inference_and_log_MC_sampling(
+            elif args.analysis == "metrics":
+                run_inference_LDM_vanilla_and_log_MC_sampling(
                     diffusion_model=diffusion,
                     autoencoder=autoencoder,
                     condition_batch=img_A_latent,
@@ -465,34 +424,27 @@ if __name__ == '__main__':
 
     else:
 
-        csv_path = os.path.join(experiment_dir, f"{args.experiment_name}_metrics_epoch_{args.epoch}.csv")
+        for step, batch in tqdm(enumerate(loader)):
+            img_A = batch["A"].to(DEVICE)
+            img_B = batch["B"].to(DEVICE)
 
-        with open(csv_path, mode='w', newline='') as csvfile:
-            fieldnames = ['Sample', 'MSE', 'PSNR', 'SSIM']
-            writer_csv = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            writer_csv.writeheader()
+            with torch.no_grad():
+                _, img_A_latent, _ = autoencoder(img_A)
 
-            for step, batch in tqdm(enumerate(loader)):
-                img_A = batch["A"].to(DEVICE)
-                img_B = batch["B"].to(DEVICE)
+            img_A_latent = img_A_latent * scaling_factor
 
-                with torch.no_grad():
-                    _, img_A_latent, _ = autoencoder(img_A)
-
-                img_A_latent = img_A_latent * scaling_factor
-
-                run_inference_and_log(
-                    diffusion_model=diffusion,
-                    autoencoder=autoencoder,
-                    condition_batch=img_A_latent,
-                    gt_batch=img_B,
-                    writer=writer,
-                    step=step,
-                    device=DEVICE,
-                    scheduler=scheduler,
-                    scaling=scaling_factor,
-                    csv_writer=writer_csv
-                )
+            run_inference_LDM_vanilla_and_log(
+                diffusion_model=diffusion,
+                autoencoder=autoencoder,
+                condition_batch=img_A_latent,
+                gt_batch=img_B,
+                writer=writer,
+                step=step,
+                device=DEVICE,
+                scheduler=scheduler,
+                scaling=scaling_factor,
+                csv_writer=writer_csv
+            )
 
         print(f"✅ Inference complete. Metrics saved to {csv_path}")
 
