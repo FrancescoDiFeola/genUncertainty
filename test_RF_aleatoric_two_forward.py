@@ -127,7 +127,7 @@ if __name__ == '__main__':
 
     if args.analysis == "sparsification":
 
-        csv_path = os.path.join(experiment_dir, f"sparsification_epoch_{args.epoch}.csv")
+        csv_path = os.path.join(experiment_dir, f"sparsification_K_30_epoch_{args.epoch}.csv")
         writer_csv = initialize_writers(csv_path, writer_type=args.analysis)[1]
 
     elif args.analysis == "both":
@@ -152,6 +152,7 @@ if __name__ == '__main__':
                 device=DEVICE,
                 scheduler=scheduler,
                 csv_writer=writer_csv,
+                K=30,
             )
         elif args.analysis == "both":
 
@@ -167,6 +168,7 @@ if __name__ == '__main__':
                 scheduler=scheduler,
                 csv_writer=writer_csv,
                 csv_writer_2=writer_csv_2,
+                K=30,
             )
 
     print(f"✅ Inference complete. Metrics saved to {csv_path}")

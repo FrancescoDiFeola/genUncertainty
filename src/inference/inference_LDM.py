@@ -1533,7 +1533,7 @@ def run_inference_LDM_aleatoric_and_log_uncertainty_propagation_sparsification(
     # This is the final reconstructed image.
     # ==================================================
     pred_denoised = autoencoder.decode(pred_denoised_latent / scaling)
-    condition_dec = autoencoder.decode(condition_batch / scaling)
+    # condition_dec = autoencoder.decode(condition_batch / scaling)
 
     # ==================================================
     # Monte Carlo decoding of learned uncertainty
@@ -1587,7 +1587,6 @@ def run_inference_LDM_aleatoric_and_log_uncertainty_propagation_sparsification(
         })
 
 ####################### LDM vanilla #####################
-
 
 @torch.no_grad()
 def run_inference_LDM_vanilla_and_log(

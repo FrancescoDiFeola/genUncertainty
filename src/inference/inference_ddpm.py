@@ -1019,7 +1019,6 @@ def run_inference_and_log_v3_clean_unc_integral_sparsification(
     U_x0 = U_x0 / max(num_valid_steps, 1)
     uncertainty_map = U_x0
 
-    ld = condition_batch.cpu().detach()
     gt = gt_batch.cpu().detach()
     pred = pred_denoised.cpu().detach()
 
@@ -1385,22 +1384,49 @@ def run_ddpm_aleatoric_inference_and_log_v2(
     condition_batch = condition_batch.to(device)
     gt_batch = gt_batch.to(device)
 
+    # ==================================================
+    # Trajectory-level uncertainty accumulator (x0 space)
+    # ==================================================
+    U_x0 = torch.zeros((B, 1, H, W), device=device)
+    num_valid_steps = 0
+
+    num_steps = len(scheduler.timesteps)
+    K = 10  # number of late decision-relevant steps (excluding final)
+
     uncertainty = None
-    for t in tqdm(scheduler.timesteps, desc="DDIM Sampling"):
+    for i, t in enumerate(tqdm(scheduler.timesteps, desc="DDIM Sampling")):
         t_tensor = torch.tensor([t], device=device).long()
         model_input = torch.cat([x, condition_batch], dim=1)
         pred_noise, pred_logvar = diffusion_model(x=model_input, timesteps=t_tensor, context=None)
+
+        # ==================================================
+        # Accumulate late-step decision-time uncertainty (evaluation only)
+        # ==================================================
+        # Use last K steps, excluding the final step
+        if (num_steps - K - 1) <= i < (num_steps - 1):
+            a_bar = scheduler.alphas_cumprod[t].view(-1, 1, 1, 1)
+
+            var_eps = torch.exp(pred_logvar.float())
+            var_x0_t = (1.0 - a_bar) / (a_bar + 1e-8) * var_eps
+
+            U_x0 += var_x0_t
+            num_valid_steps += 1
+
         x, _ = scheduler.step(pred_noise, t_tensor, x)
-        last_t = t_tensor
+        # last_t = t_tensor
 
     pred_denoised = x
 
+    # Final trajectory-integrated uncertainty map (for metrics only)
+    U_x0 = U_x0 / max(num_valid_steps, 1)
+    uncertainty_map = U_x0
+
     # --- Option A: analytic uncertainty propagation ---
-    uncertainty_map = propagate_uncertainty_eps_to_x0(
-        pred_logvar_eps=pred_logvar,
-        timesteps=last_t,
-        scheduler=scheduler,
-    )
+    # uncertainty_map = propagate_uncertainty_eps_to_x0(
+    #    pred_logvar_eps=pred_logvar,
+    #    timesteps=last_t,
+    #    scheduler=scheduler,
+    # )
 
     def norm_percentile(x, pmin=1, pmax=99):
         x = x.clone().to(torch.float32)
@@ -1510,22 +1536,49 @@ def run_ddpm_aleatoric_inference_and_log_v2_sparsification(
     condition_batch = condition_batch.to(device)
     gt_batch = gt_batch.to(device)
 
+    # ==================================================
+    # Trajectory-level uncertainty accumulator (x0 space)
+    # ==================================================
+    U_x0 = torch.zeros((B, 1, H, W), device=device)
+    num_valid_steps = 0
+
+    num_steps = len(scheduler.timesteps)
+    K = 10  # number of late decision-relevant steps (excluding final)
+
     uncertainty = None
-    for t in tqdm(scheduler.timesteps, desc="DDIM Sampling"):
+    for i, t in enumerate(tqdm(scheduler.timesteps, desc="DDIM Sampling")):
         t_tensor = torch.tensor([t], device=device).long()
         model_input = torch.cat([x, condition_batch], dim=1)
         pred_noise, pred_logvar = diffusion_model(x=model_input, timesteps=t_tensor, context=None)
+
+        # ==================================================
+        # Accumulate late-step decision-time uncertainty (evaluation only)
+        # ==================================================
+        # Use last K steps, excluding the final step
+        if (num_steps - K - 1) <= i < (num_steps - 1):
+            a_bar = scheduler.alphas_cumprod[t].view(-1, 1, 1, 1)
+
+            var_eps = torch.exp(pred_logvar.float())
+            var_x0_t = (1.0 - a_bar) / (a_bar + 1e-8) * var_eps
+
+            U_x0 += var_x0_t
+            num_valid_steps += 1
+
         x, _ = scheduler.step(pred_noise, t_tensor, x)
-        last_t = t_tensor
+        # last_t = t_tensor
 
     pred_denoised = x
 
+    # Final trajectory-integrated uncertainty map (for metrics only)
+    U_x0 = U_x0 / max(num_valid_steps, 1)
+    uncertainty_map = U_x0
+
     # --- Option A: analytic uncertainty propagation ---
-    uncertainty_map = propagate_uncertainty_eps_to_x0(
-        pred_logvar_eps=pred_logvar,
-        timesteps=last_t,
-        scheduler=scheduler,
-    )
+    # uncertainty_map = propagate_uncertainty_eps_to_x0(
+    #    pred_logvar_eps=pred_logvar,
+    #    timesteps=last_t,
+    #    scheduler=scheduler,
+    # )
 
     gt = gt_batch.cpu().detach()
     pred = pred_denoised.cpu().detach()

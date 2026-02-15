@@ -1,17 +1,10 @@
-import os
 import argparse
-import torch
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 from monai.utils import set_determinism
 from torchvision import transforms
 from monai.networks.schedulers import RFlowScheduler
 from monai.networks.nets.autoencoderkl import AutoencoderKL
-from tqdm import tqdm
-import numpy as np
-import matplotlib.pyplot as plt
-import csv
-from skimage.metrics import peak_signal_noise_ratio as compute_psnr, structural_similarity as compute_ssim
 from src.brlp.T1_T2_dataset import T1T2Dataset
 from src.brlp.ldct_hdct_dataset import LDCTHDCTDataset
 from src.brlp.Mri2DSlice_dataset import Mri2DSlicedataset
@@ -19,8 +12,8 @@ from src.brlp.ND_dataset import PairedImageDataset
 from src.brlp.CS_dataset import CityscapesColorDataset
 from src.brlp import networks
 from src.VAE.utils.checkpoints_utils import load_checkpoint
-from sklearn.metrics import roc_auc_score
-from scipy.stats import pearsonr, spearmanr
+from src.inference.inference_LFM import *
+from src.inference.utils import initialize_writers
 
 # -----------------------
 # ✅ Set environment
@@ -28,278 +21,6 @@ from scipy.stats import pearsonr, spearmanr
 set_determinism(0)
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 NUM_GPUS = torch.cuda.device_count()
-
-def map_correlations_multi_thresholds(unc_map, pred, gt, percentiles=(95, 90, 85)):
-    """
-    Compute correlation and failure-discrimination metrics between uncertainty and error maps.
-
-    For each percentile p:
-      - define failure pixels as top (100 - p)% highest-error pixels
-      - compute AUROC of uncertainty predicting failure
-
-    Args:
-        unc_map (np.ndarray): uncertainty map (H, W) or (C, H, W)
-        pred (np.ndarray): prediction
-        gt (np.ndarray): ground truth
-        percentiles (tuple): percentiles defining error thresholds
-                             (95 -> top 5%, 90 -> top 10%, etc.)
-
-    Returns:
-        results (dict): dictionary with:
-            - pearson
-            - spearman
-            - auroc_top_5
-            - auroc_top_10
-            - auroc_top_15
-    """
-
-    # --- error map ---
-    err = np.abs(pred - gt)
-
-    # flatten
-    u = unc_map.flatten()
-    e = err.flatten()
-
-    # remove NaN / Inf
-    mask = np.isfinite(u) & np.isfinite(e)
-    u = u[mask]
-    e = e[mask]
-
-    results = {}
-
-    # --- global correlations ---
-    results["pearson"] = pearsonr(u, e)[0]
-    results["spearman"] = spearmanr(u, e)[0]
-
-    # --- failure discrimination at multiple thresholds ---
-    for p in percentiles:
-        err_thresh = np.percentile(e, p)
-        err_bin = (e > err_thresh).astype(np.int32)
-
-        # AUROC is only valid if both classes exist
-        if len(np.unique(err_bin)) > 1:
-            auroc = roc_auc_score(err_bin, u)
-        else:
-            auroc = np.nan
-
-        results[f"AUROC_top{100-p}"] = auroc
-
-    return results
-
-@torch.no_grad()
-def run_inference_and_log(
-        diffusion_model,
-        autoencoder,
-        condition_batch,
-        gt_batch,
-        writer,
-        step,
-        device,
-        scheduler,
-        scaling,
-        csv_writer
-):
-    diffusion_model.eval()
-    B, C, H, W = condition_batch.shape
-
-    x = torch.randn_like(condition_batch).to(device)
-    condition_batch = condition_batch.to(device)
-    gt_batch = gt_batch.to(device)
-
-    all_next_timesteps = torch.cat((scheduler.timesteps[1:], torch.tensor([0], dtype=scheduler.timesteps.dtype, device=scheduler.timesteps.device)))
-    for i, (t, next_t) in enumerate(tqdm(zip(scheduler.timesteps, all_next_timesteps), total=min(len(scheduler.timesteps), len(all_next_timesteps)), )):
-        t_tensor = torch.tensor([t], device=device).long()
-        model_input = torch.cat([x, condition_batch], dim=1)
-        predicted_velocity = diffusion_model(x=model_input, timesteps=t_tensor, context=None)
-        x, _ = scheduler.step(predicted_velocity, t, x, next_t)
-
-    pred_denoised_latent = x
-
-    pred_denoised = autoencoder.decode(pred_denoised_latent/scaling)
-    condition_batch = autoencoder.decode(condition_batch/scaling)
-
-    def norm_percentile(x, pmin=1, pmax=99):
-        x = x.clone().to(torch.float32)
-        B = x.shape[0]
-        normed = torch.zeros_like(x)
-        for i in range(B):
-            x_i = x[i]
-            min_val = torch.quantile(x_i, pmin / 100.0)
-            max_val = torch.quantile(x_i, pmax / 100.0)
-            x_i = torch.clamp(x_i, min=min_val, max=max_val)
-            normed[i] = (x_i - min_val) / (max_val - min_val + 1e-8)
-        return normed
-
-    ld = condition_batch.cpu().detach()
-    gt = gt_batch.cpu().detach()
-    pred = pred_denoised.cpu().detach()
-    error = norm_percentile(abs(pred - gt))
-
-    fig, axes = plt.subplots(nrows=B, ncols=5, figsize=(8, 2.5 * B))
-    if B == 1:
-        axes = [axes]
-
-    for i in range(B):
-        images = [ld[i], gt[i], pred[i], error[i]]
-        titles = ["T1", "T2", "Prediction", "Error"]
-
-        # Extract arrays
-        gt_array = gt[i][0].numpy()
-        pred_array = pred[i][0].numpy()
-        # Create a mask where gt is not zero
-        mask = gt_array != 0
-
-        # Compute metrics
-        psnr = compute_psnr(gt_array[mask], pred_array[mask], data_range=gt[i][0].numpy().max() - gt[i][0].numpy().min())
-        ssim = compute_ssim(gt_array[mask], pred_array[mask], data_range=gt[i][0].numpy().max() - gt[i][0].numpy().min())
-        mse = np.mean((gt_array[mask] - pred_array[mask]) ** 2)
-        print(psnr, ssim, mse)
-        csv_writer.writerow({'Sample': step * B + i, 'MSE': mse, 'PSNR': psnr, 'SSIM': ssim})
-
-        for j in range(4):
-            ax = axes[i][j] if B > 1 else axes[0][j]
-            ax.set_axis_off()
-            ax.set_title(titles[j])
-            img = images[j].squeeze(0).cpu().numpy()
-            ax.imshow(img, cmap='hot' if titles[j] in ["Uncertainty", "Error"] else 'gray')
-
-    plt.tight_layout()
-    writer.add_figure("Test/Inference", plt.gcf(), global_step=step)
-    plt.close()
-
-
-@torch.no_grad()
-def run_inference_and_log_MC_sampling(
-        diffusion_model,
-        autoencoder,
-        condition_batch,
-        gt_batch,
-        writer,
-        step,
-        device,
-        scheduler,
-        scaling,
-        csv_writer,
-):
-    diffusion_model.eval()
-    B, C, H, W = condition_batch.shape
-
-
-    x = torch.randn_like(condition_batch).to(device)
-    condition_batch = condition_batch.to(device)
-    gt_batch = gt_batch.to(device)
-
-    # --------------------------------------------------
-    # Monte Carlo sampling parameters
-    # --------------------------------------------------
-    S = 10  # number of sampled trajectories (8–16 is standard)
-
-    samples = []
-
-    # --------------------------------------------------
-    # Monte Carlo sampling
-    # --------------------------------------------------
-    for s in range(S):
-        x = torch.randn_like(condition_batch)
-        all_next_timesteps = torch.cat((scheduler.timesteps[1:], torch.tensor([0], dtype=scheduler.timesteps.dtype, device=scheduler.timesteps.device)))
-        for i, (t, next_t) in enumerate(tqdm(zip(scheduler.timesteps, all_next_timesteps), total=min(len(scheduler.timesteps), len(all_next_timesteps)), )):
-            t_tensor = torch.tensor([t], device=device).long()
-            model_input = torch.cat([x, condition_batch], dim=1)
-
-            predicted_velocity = diffusion_model(
-                x=model_input,
-                timesteps=t_tensor,
-                context=None
-            )
-
-            x, _ = scheduler.step(predicted_velocity,  t, x, next_t)
-
-        # pred_denoised = x
-        x = autoencoder.decode(x / scaling)
-        samples.append(x.cpu())
-
-    samples = torch.stack(samples, dim=0)  # (S, B, C, H, W)
-
-    # --------------------------------------------------
-    # Predictive mean and sampling variance
-    # --------------------------------------------------
-    pred_denoised = samples.mean(dim=0)
-    mc_uncertainty_map = samples.var(dim=0, unbiased=False)
-
-    # --------------------------------------------------
-    # Normalization helper
-    # --------------------------------------------------
-    def norm_percentile(x, pmin=1, pmax=99):
-        x = x.clone().to(torch.float32)
-        B = x.shape[0]
-        normed = torch.zeros_like(x)
-        for i in range(B):
-            x_i = x[i]
-            lo = torch.quantile(x_i, pmin / 100.0)
-            hi = torch.quantile(x_i, pmax / 100.0)
-            x_i = torch.clamp(x_i, lo, hi)
-            normed[i] = (x_i - lo) / (hi - lo + 1e-8)
-        return normed
-
-    # --------------------------------------------------
-    # Metrics & logging
-    # --------------------------------------------------
-    condition_batch = autoencoder.decode(condition_batch / scaling)
-    ld = condition_batch.cpu()
-    gt = gt_batch.cpu()
-    pred = pred_denoised.cpu()
-    unc = norm_percentile(mc_uncertainty_map).cpu()
-    error = norm_percentile(torch.abs(pred - gt))
-
-    fig, axes = plt.subplots(nrows=B, ncols=5, figsize=(8, 2.5 * B))
-    if B == 1:
-        axes = [axes]
-
-    for i in range(B):
-        images = [ld[i], gt[i], pred[i], unc[i], error[i]]
-        titles = ["T1", "T2", "Prediction", "MC-Dropout Unc.", "Error"]
-
-        gt_array = gt[i][0].numpy()
-        pred_array = pred[i][0].numpy()
-
-        psnr = compute_psnr(
-            gt_array, pred_array,
-            data_range=gt_array.max() - gt_array.min()
-        )
-        ssim = compute_ssim(
-            gt_array, pred_array,
-            data_range=gt_array.max() - gt_array.min()
-        )
-        mse = np.mean((gt_array - pred_array) ** 2)
-        correlations_norm = map_correlations_multi_thresholds(unc[i][0].cpu().detach().numpy(), pred_array, gt_array)
-        correlations_unnorm = map_correlations_multi_thresholds(mc_uncertainty_map[i][0].cpu().detach().numpy(), pred_array, gt_array)
-
-        csv_writer.writerow({'Sample': step * B + i,
-                             'MSE': mse,
-                             'PSNR': psnr,
-                             'SSIM': ssim,
-                             'Pearson_u_norm': correlations_norm["pearson"],
-                             'Spearman_u_norm': correlations_norm["spearman"],
-                             'AUROC_top15_u_norm': correlations_norm["AUROC_top15"],
-                             'AUROC_top10_u_norm': correlations_norm["AUROC_top10"],
-                             'AUROC_top5_u_norm': correlations_norm["AUROC_top5"],
-                             'Pearson_u_unnorm': correlations_unnorm["pearson"],
-                             'Spearman_u_unnorm': correlations_unnorm["spearman"],
-                             'AUROC_top15_u_unnorm': correlations_unnorm["AUROC_top15"],
-                             'AUROC_top10_u_unnorm': correlations_unnorm["AUROC_top10"],
-                             'AUROC_top5_u_unnorm': correlations_unnorm["AUROC_top5"],
-                             })
-
-        for j in range(5):
-            ax = axes[i][j] if B > 1 else axes[0][j]
-            ax.set_axis_off()
-            ax.set_title(titles[j])
-            img = images[j].squeeze(0).numpy()
-            ax.imshow(img, cmap='hot' if titles[j] in ["MC-Dropout Unc.", "Error"] else 'gray')
-
-    plt.tight_layout()
-    writer.add_figure("Test/Inference_MC_Dropout", plt.gcf(), global_step=step)
-    plt.close()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -310,6 +31,7 @@ if __name__ == '__main__':
     parser.add_argument('--epoch', default=None, type=str)
     parser.add_argument('--experiment_name', type=str, required=True)
     parser.add_argument('--task', required=True, type=str)
+    parser.add_argument('--analysis', type=str, required=False)
     parser.add_argument('--batch_size', default=1, type=int)
     parser.add_argument('--num_workers', default=4, type=int)
     parser.add_argument('--in_ch', default=2, type=int)
@@ -424,28 +146,50 @@ if __name__ == '__main__':
 
     writer = SummaryWriter(comment=args.experiment_name)
 
+    if args.analysis == "sparsification":
+
+        csv_path = os.path.join(experiment_dir, f"sparsification_epoch_{args.epoch}.csv")
+        writer_csv = initialize_writers(csv_path, writer_type=args.analysis)[1]
+
+    elif args.analysis == "metrics":
+
+        csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_image_uncertainty_train.csv")
+        writer_csv = initialize_writers(csv_path, writer_type=args.analysis)
+
+    elif args.analysis == "metrics_v1":
+
+        csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}.csv")
+        writer_csv = initialize_writers(csv_path, writer_type=args.analysis)[1]
+
     if args.MC_sampling:
 
-        csv_path = os.path.join(experiment_dir, f"{args.experiment_name}_metrics_epoch_{args.epoch}_image_uncertainty.csv")
 
-        # open both CSV files at the same time and keep them open during inference
-        with open(csv_path, mode='w', newline='') as csvfile:
+        for step, batch in enumerate(loader):
+            img_A = batch["A"].to(DEVICE)
+            img_B = batch["B"].to(DEVICE)
 
-            # metrics CSV
-            fieldnames = ['Sample', 'MSE', 'PSNR', 'SSIM', 'Pearson_u_norm', 'Spearman_u_norm', 'AUROC_top15_u_norm', 'AUROC_top10_u_norm', 'AUROC_top5_u_norm', 'Pearson_u_unnorm', 'Spearman_u_unnorm', 'AUROC_top15_u_unnorm', 'AUROC_top10_u_unnorm', 'AUROC_top5_u_unnorm']
-            writer_csv = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            writer_csv.writeheader()
+            with torch.no_grad():
+                _, img_A_latent, _ = autoencoder(img_A)
 
-            for step, batch in enumerate(loader):
-                img_A = batch["A"].to(DEVICE)
-                img_B = batch["B"].to(DEVICE)
+            img_A_latent = img_A_latent * scaling_factor
 
-                with torch.no_grad():
-                    _, img_A_latent, _ = autoencoder(img_A)
+            if args.analysis == "sparsification":
 
-                img_A_latent = img_A_latent * scaling_factor
+                run_inference_LFM_vanilla_and_log_MC_sampling_sparsification(
+                    diffusion_model=diffusion,
+                    autoencoder=autoencoder,
+                    condition_batch=img_A_latent,
+                    gt_batch=img_B,
+                    step=step,
+                    device=DEVICE,
+                    scheduler=scheduler,
+                    scaling=scaling_factor,
+                    csv_writer=writer_csv
+                )
 
-                run_inference_and_log_MC_sampling(
+            elif args.analysis == "metrics":
+
+                run_inference_LFM_vanilla_and_log_MC_sampling(
                     diffusion_model=diffusion,
                     autoencoder=autoencoder,
                     condition_batch=img_A_latent,
@@ -462,33 +206,26 @@ if __name__ == '__main__':
 
     else:
 
-        csv_path = os.path.join(experiment_dir, f"{args.experiment_name}_metrics_epoch_{args.epoch}.csv")
+        for step, batch in enumerate(loader):
+            img_A = batch["A"].to(DEVICE)
+            img_B = batch["B"].to(DEVICE)
 
-        with open(csv_path, mode='w', newline='') as csvfile:
-            fieldnames = ['Sample', 'MSE', 'PSNR', 'SSIM']
-            writer_csv = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            writer_csv.writeheader()
+            with torch.no_grad():
+                _, img_A_latent, _ = autoencoder(img_A)
 
-            for step, batch in enumerate(loader):
-                img_A = batch["A"].to(DEVICE)
-                img_B = batch["B"].to(DEVICE)
+            img_A_latent = img_A_latent * scaling_factor
 
-                with torch.no_grad():
-                    _, img_A_latent, _ = autoencoder(img_A)
-
-                img_A_latent = img_A_latent * scaling_factor
-
-                run_inference_and_log(
-                    diffusion_model=diffusion,
-                    autoencoder=autoencoder,
-                    condition_batch=img_A_latent,
-                    gt_batch=img_B,
-                    writer=writer,
-                    step=step,
-                    device=DEVICE,
-                    scheduler=scheduler,
-                    scaling=scaling_factor,
-                    csv_writer=writer_csv
-                )
+            run_inference_LFM_vanilla_and_log(
+                diffusion_model=diffusion,
+                autoencoder=autoencoder,
+                condition_batch=img_A_latent,
+                gt_batch=img_B,
+                writer=writer,
+                step=step,
+                device=DEVICE,
+                scheduler=scheduler,
+                scaling=scaling_factor,
+                csv_writer=writer_csv
+            )
 
         print(f"✅ Inference complete. Metrics saved to {csv_path}")

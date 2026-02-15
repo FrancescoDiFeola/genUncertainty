@@ -404,6 +404,7 @@ def run_inference_RF_self_refining_and_log_v3_clean_unc_integral( # in this func
         scheduler,
         csv_writer,
         csv_writer_2,
+        K,   # number of late decision-relevant steps (excluding final)
 ):
     diffusion_model.eval()
     B, C, H, W = condition_batch.shape
@@ -419,7 +420,6 @@ def run_inference_RF_self_refining_and_log_v3_clean_unc_integral( # in this func
     num_valid_steps = 0
 
     num_steps = len(scheduler.timesteps)
-    K = 10  # number of late decision-relevant steps (excluding final)
     prev_uncertainty_map = None
     all_next_timesteps = torch.cat((scheduler.timesteps[1:],torch.tensor([0], dtype=scheduler.timesteps.dtype, device=scheduler.timesteps.device)))
     for i, (t, next_t) in enumerate(tqdm(zip(scheduler.timesteps, all_next_timesteps), total = min(len(scheduler.timesteps), len(all_next_timesteps)),)):
@@ -613,6 +613,7 @@ def run_inference_RF_self_refining_and_log_v3_clean_unc_integral_sparsification(
         device,
         scheduler,
         csv_writer,
+        K,
 ):
     diffusion_model.eval()
     B, C, H, W = condition_batch.shape
@@ -628,7 +629,6 @@ def run_inference_RF_self_refining_and_log_v3_clean_unc_integral_sparsification(
     num_valid_steps = 0
 
     num_steps = len(scheduler.timesteps)
-    K = 10  # number of late decision-relevant steps (excluding final)
     prev_uncertainty_map = None
     all_next_timesteps = torch.cat((scheduler.timesteps[1:],torch.tensor([0], dtype=scheduler.timesteps.dtype, device=scheduler.timesteps.device)))
     for i, (t, next_t) in enumerate(tqdm(zip(scheduler.timesteps, all_next_timesteps), total = min(len(scheduler.timesteps), len(all_next_timesteps)),)):
@@ -753,7 +753,8 @@ def run_inference_RF_aleatoric(
         device,
         scheduler,
         csv_writer,
-        csv_writer_2
+        csv_writer_2,
+        K,
 ):
 
     diffusion_model.eval()
@@ -763,19 +764,46 @@ def run_inference_RF_aleatoric(
     condition_batch = condition_batch.to(device)
     gt_batch = gt_batch.to(device)
 
+    # ==================================================
+    # Trajectory-level uncertainty accumulator (x0 space)
+    # ==================================================
+    U_v = torch.zeros((B, 1, H, W), device=device)
+    num_valid_steps = 0
+    num_steps = len(scheduler.timesteps)
     all_next_timesteps = torch.cat((scheduler.timesteps[1:],torch.tensor([0], dtype=scheduler.timesteps.dtype, device=scheduler.timesteps.device)))
-    for t, next_t in tqdm(zip(scheduler.timesteps, all_next_timesteps), total = min(len(scheduler.timesteps), len(all_next_timesteps)),):
+    for i, (t, next_t) in enumerate(tqdm(zip(scheduler.timesteps, all_next_timesteps), total = min(len(scheduler.timesteps), len(all_next_timesteps)),)):
         t_tensor = torch.tensor([t], device=device).long()
 
         # Reconstruct input with current latent
         model_input = torch.cat([x, condition_batch], dim=1)
         predicted_velocity, pred_logvar = diffusion_model(x=model_input, timesteps=t_tensor, context=None)
 
+        # ==================================================
+        # Accumulate late-step decision-time uncertainty
+        # ==================================================
+        if (num_steps - K - 1) <= i < (num_steps - 1):
+
+            # Learned variance of the velocity field
+            var_v_t = torch.exp(pred_logvar.float())
+
+            # Optional: weight by dt^2 (commented out by default)
+            # dt = 1.0 / scheduler.num_inference_steps
+            # var_v_t = (dt ** 2) * var_v_t
+
+            U_v += var_v_t
+            num_valid_steps += 1
+
         x, _ = scheduler.step(predicted_velocity, t, x, next_t)
-        uncertainty = pred_logvar
+        # uncertainty = pred_logvar
 
     final_output = x
-    uncertainty_map = torch.exp(uncertainty)
+    # uncertainty_map = torch.exp(uncertainty)
+
+    # --------------------------------------------------
+    # Final trajectory-averaged uncertainty
+    # --------------------------------------------------
+    U_v = U_v / max(num_valid_steps, 1)
+    uncertainty_map = U_v
 
     def norm_percentile(x, pmin=1, pmax=99):
         x = x.clone().to(torch.float32)
@@ -874,6 +902,7 @@ def run_inference_RF_aleatoric_sparsification(
         device,
         scheduler,
         csv_writer,
+        K,
 ):
 
     diffusion_model.eval()
@@ -883,19 +912,48 @@ def run_inference_RF_aleatoric_sparsification(
     condition_batch = condition_batch.to(device)
     gt_batch = gt_batch.to(device)
 
+
+    # ==================================================
+    # Trajectory-level uncertainty accumulator (x0 space)
+    # ==================================================
+    U_v = torch.zeros((B, 1, H, W), device=device)
+    num_valid_steps = 0
+    num_steps = len(scheduler.timesteps)
+
     all_next_timesteps = torch.cat((scheduler.timesteps[1:],torch.tensor([0], dtype=scheduler.timesteps.dtype, device=scheduler.timesteps.device)))
-    for t, next_t in tqdm(zip(scheduler.timesteps, all_next_timesteps), total = min(len(scheduler.timesteps), len(all_next_timesteps)),):
+    for i, (t, next_t) in enumerate(tqdm(zip(scheduler.timesteps, all_next_timesteps), total = min(len(scheduler.timesteps), len(all_next_timesteps)),)):
         t_tensor = torch.tensor([t], device=device).long()
 
         # Reconstruct input with current latent
         model_input = torch.cat([x, condition_batch], dim=1)
         predicted_velocity, pred_logvar = diffusion_model(x=model_input, timesteps=t_tensor, context=None)
 
+        # ==================================================
+        # Accumulate late-step decision-time uncertainty
+        # ==================================================
+        if (num_steps - K - 1) <= i < (num_steps - 1):
+
+            # Learned variance of the velocity field
+            var_v_t = torch.exp(pred_logvar.float())
+
+            # Optional: weight by dt^2 (commented out by default)
+            # dt = 1.0 / scheduler.num_inference_steps
+            # var_v_t = (dt ** 2) * var_v_t
+
+            U_v += var_v_t
+            num_valid_steps += 1
+
         x, _ = scheduler.step(predicted_velocity, t, x, next_t)
-        uncertainty = pred_logvar
+        # uncertainty = pred_logvar
 
     final_output = x
-    uncertainty_map = torch.exp(uncertainty)
+    # uncertainty_map = torch.exp(uncertainty)
+
+    # --------------------------------------------------
+    # Final trajectory-averaged uncertainty
+    # --------------------------------------------------
+    U_v = U_v / max(num_valid_steps, 1)
+    uncertainty_map = U_v
 
 
     gt = gt_batch.cpu().detach()

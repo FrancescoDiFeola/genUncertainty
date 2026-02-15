@@ -119,13 +119,13 @@ if __name__ == '__main__':
 
     if args.analysis == "sparsification":
 
-        csv_path = os.path.join(experiment_dir, f"sparsification_epoch_{args.epoch}.csv")
+        csv_path = os.path.join(experiment_dir, f"sparsification_K_10_epoch_{args.epoch}.csv")
         writer_csv = initialize_writers(csv_path, writer_type=args.analysis)[1]
 
     elif args.analysis == "both":
 
-        csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_image_uncertainty_train.csv")
-        csv_path_2 = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_uncertainty_calibration_train.csv")
+        csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_image_uncertainty_K_10_train.csv")
+        csv_path_2 = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_uncertainty_calibration_K_10_train.csv")
         writer_ = initialize_writers(csv_path, csv_path_2, writer_type=args.analysis)
         writer_csv = writer_[2]
         writer_csv_2 = writer_[3]
@@ -143,6 +143,7 @@ if __name__ == '__main__':
                 device=DEVICE,
                 scheduler=scheduler,
                 csv_writer=writer_csv,
+                K=10,
             )
 
         elif args.analysis == "both":
@@ -157,6 +158,7 @@ if __name__ == '__main__':
                 scheduler=scheduler,
                 csv_writer=writer_csv,
                 csv_writer_2 = writer_csv_2,
+                K=10,
             )
 
     print(f"✅ Inference complete. Metrics saved to {csv_path}")
