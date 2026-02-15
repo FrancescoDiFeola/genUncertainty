@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #SBATCH -A NAISS2025-5-662 -p alvis
 #SBATCH -N 1 --gpus-per-node=A40:1
-#SBATCH -t 0-14:00:00
+#SBATCH -t 3-00:00:00
 # Output files
 #SBATCH --error=./error/job_%J.err
 #SBATCH --output=./output/out_%J.out
@@ -29,7 +29,7 @@ cd /mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion
 
 # python3 ./test_ddpm_aleatoric.py  --num_workers 8 --experiment_name "aleatoric_uncertainty_b16_T1T2" --epoch "300" --task "T1T2"
 
-# python3 ./test_ddpm_aleatoric_two_forward.py  --num_workers 8 --experiment_name "ddpm_aleatoric_two_forward_MRtoCT" --epoch "50" --task "MRtoCT"  --spatial_enc_channels 1
+python3 ./test_ddpm_aleatoric_two_forward.py  --num_workers 8 --experiment_name "ddpm_aleatoric_two_forward_MRtoCT" --epoch "300" --task "MRtoCT" --analysis "sparsification" --spatial_enc_channels 1
 #--dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/FDG-PEt_CT-lesion/lung_slices" --phase train --slice_range 0 10000 --mri_modalities CT PET --under_sample_dataset
 
 # python3 ./test_ddpm.py  --num_workers 8 --experiment_name "ddpm_MRtoCT" --epoch "100" --task "MRtoCT"

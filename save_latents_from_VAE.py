@@ -14,6 +14,7 @@ from src.VAE.data.dataset_Denoising import LDCTHDCTDataset
 from src.VAE.data.dataset_T1T2 import T1T2Dataset
 from src.VAE.data.dataset_CTPET import CTPETDataset
 from src.VAE.data.dataset_MRtoCT import MRCTSingleImageDataset
+import csv
 
 # --- CONFIGURAZIONE ---
 # INPUT_ROOT = "/mimer/NOBACKUP/groups/naiss2023-6-336/lcarusone/TESI_MAGISTRALE/dataset/patches_test/images"
@@ -118,10 +119,41 @@ if __name__ == "__main__":
     sq_sum = 0.0
     count = 0
 
+    # check if there are NaN values inside the loaded images
+    """
+    nan_paths = []
+
+    with torch.no_grad():
+        for batch in tqdm(loader):
+
+            inputs = batch['img'].to(DEVICE)  # shape: [B, C, H, W] (or similar)
+            paths = batch['path']  # list of paths (length B)
+
+            # Check NaNs per sample (not just whole batch)
+            # Flatten each sample and check if any NaN exists
+            B = inputs.shape[0]
+
+            for i in range(B):
+                if torch.isnan(inputs[i]).any():
+                    nan_paths.append(paths[i])
+
+    # Save CSV at the end
+    output_csv = "nan_images_MRtoCT_train.csv"
+    with open(output_csv, mode='w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(["path"])
+        for p in nan_paths:
+            writer.writerow([p])
+
+    print(f"Saved {len(nan_paths)} problematic paths to {output_csv}")
+    """
+
+
     with torch.no_grad():
         for batch in tqdm(loader):
 
             inputs = batch['img'].to(DEVICE)
+            path = batch['path']
             # valid_indices = [i for i, p in enumerate(batch_paths) if p != ""]
             # if not valid_indices:
             #    continue
@@ -140,20 +172,20 @@ if __name__ == "__main__":
             # Sposta su CPU
             # latents_cpu = latents.cpu()
 
-            """
-            for i, rel_path in enumerate(paths):
-                dest_path = os.path.join(OUTPUT_ROOT, rel_path.replace("_ct.nii.gz", ".pt"))
-                dest_dir = os.path.dirname(dest_path)
-                os.makedirs(dest_dir, exist_ok=True)
+            
+            # for i, rel_path in enumerate(paths):
+            #    dest_path = os.path.join(OUTPUT_ROOT, rel_path.replace("_ct.nii.gz", ".pt"))
+            #    dest_dir = os.path.dirname(dest_path)
+            #    os.makedirs(dest_dir, exist_ok=True)
 
                 # --- FIX: AGGIUNTA DIMENSIONE BATCH ---
                 # latents_cpu[i] è [3, 16, 16, 16]
                 # unsqueeze(0) lo fa diventare [1, 3, 16, 16, 16]
-                tensor_to_save = latents_cpu[i].unsqueeze(0).clone()
+            #    tensor_to_save = latents_cpu[i].unsqueeze(0).clone()
 
 
-                torch.save(tensor_to_save, dest_path)
-            """
+            #    torch.save(tensor_to_save, dest_path)
+            
 
     # print("\nFinito! Dataset latente ricreato correttamente in:", OUTPUT_ROOT)
 

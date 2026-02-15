@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #SBATCH -A NAISS2025-5-662 -p alvis
 #SBATCH -N 1 --gpus-per-node=A40:1
-#SBATCH -t 5-00:00:00
+#SBATCH -t 7-00:00:00
 # Output files
 #SBATCH --error=./error/job_%J.err
 #SBATCH --output=./output/out_%J.out
@@ -18,6 +18,7 @@ module load scikit-learn/1.1.2-foss-2022a
 # Activate venv
 cd /mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/venv2
 source bin/activate
+
 
 # Executes the code 
 cd /mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/

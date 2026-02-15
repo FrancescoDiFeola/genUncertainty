@@ -7,6 +7,7 @@ import torch
 import os
 from src.inference.utils import sparsification_curve, random_sparsification, norm_percentile, collect_calibration_data, map_correlations_multi_thresholds
 
+############### DDPM self-refining ####################
 @torch.no_grad()
 def propagate_uncertainty_eps_to_x0(
         pred_logvar_eps: torch.Tensor,
@@ -1029,16 +1030,334 @@ def run_inference_and_log_v3_clean_unc_integral_sparsification(
     e = err_raw.flatten()
 
 
-    fractions, curve = sparsification_curve(u, e)
+    fractions, curve = sparsification_curve(u, e, max_frac=0.95)
     rand_curve = random_sparsification(e, fractions)
+    _, curve_oracle = sparsification_curve(e, e, max_frac=0.95)
 
-    for f, c, r in zip(fractions, curve, rand_curve):
+    for f, c, r, o in zip(fractions, curve, rand_curve, curve_oracle):
         csv_writer.writerow({
             'Sample': step * B + i,
             'Fraction': f,
             'Error': c,
-            'RandomError': r
+            'RandomError': r,
+            'OracleError': o,
         })
 
+############### DDPM vanilla ################
+@torch.no_grad()
+def run_ddpm_vanilla_inference_and_log(
+        diffusion_model,
+        condition_batch,
+        gt_batch,
+        writer,
+        step,
+        device,
+        scheduler,
+        csv_writer
+):
+    diffusion_model.eval()
+    B, C, H, W = condition_batch.shape
+
+    scheduler.set_timesteps(50)
+    scheduler.alphas_cumprod = scheduler.alphas_cumprod.to(device)
+    x = torch.randn_like(condition_batch).to(device)
+    condition_batch = condition_batch.to(device)
+    gt_batch = gt_batch.to(device)
+
+    for t in tqdm(scheduler.timesteps, desc="DDIM Sampling"):
+        t_tensor = torch.tensor([t], device=device).long()
+        model_input = torch.cat([x, condition_batch], dim=1)
+        pred_noise = diffusion_model(x=model_input, timesteps=t_tensor, context=None)
+        x, _ = scheduler.step(pred_noise, t_tensor, x)
 
 
+    pred_denoised = x
+
+    def norm_percentile(x, pmin=1, pmax=99):
+        x = x.clone().to(torch.float32)
+        B = x.shape[0]
+        normed = torch.zeros_like(x)
+        for i in range(B):
+            x_i = x[i]
+            min_val = torch.quantile(x_i, pmin / 100.0)
+            max_val = torch.quantile(x_i, pmax / 100.0)
+            x_i = torch.clamp(x_i, min=min_val, max=max_val)
+            normed[i] = (x_i - min_val) / (max_val - min_val + 1e-8)
+        return normed
+
+    ld = condition_batch.cpu().detach()
+    gt = gt_batch.cpu().detach()
+    pred = pred_denoised.cpu().detach()
+    error = norm_percentile(abs(pred - gt))
+
+    fig, axes = plt.subplots(nrows=B, ncols=5, figsize=(8, 2.5 * B))
+    if B == 1:
+        axes = [axes]
+
+    for i in range(B):
+        images = [ld[i], gt[i], pred[i], error[i]]
+        titles = ["T1", "T2", "Prediction", "Error"]
+
+        # Extract arrays
+        gt_array = gt[i][0].numpy()
+        pred_array = pred[i][0].numpy()
+        # Create a mask where gt is not zero
+        mask = gt_array != 0
+
+        # Compute metrics
+        psnr = compute_psnr(gt_array[mask], pred_array[mask], data_range=gt[i][0].numpy().max() - gt[i][0].numpy().min())
+        ssim = compute_ssim(gt_array[mask], pred_array[mask], data_range=gt[i][0].numpy().max() - gt[i][0].numpy().min())
+        mse = np.mean((gt_array[mask] - pred_array[mask]) ** 2)
+        print(psnr, ssim, mse)
+        csv_writer.writerow({'Sample': step * B + i, 'MSE': mse, 'PSNR': psnr, 'SSIM': ssim})
+
+        for j in range(4):
+            ax = axes[i][j] if B > 1 else axes[0][j]
+            ax.set_axis_off()
+            ax.set_title(titles[j])
+            img = images[j].squeeze(0).cpu().numpy()
+            ax.imshow(img, cmap='hot' if titles[j] in ["Uncertainty", "Error"] else 'gray')
+
+    plt.tight_layout()
+    writer.add_figure("Test/Inference", plt.gcf(), global_step=step)
+    plt.close()
+
+
+@torch.no_grad()
+def run_ddpm_vanilla_inference_and_log_MC_sampling(
+        diffusion_model,
+        condition_batch,
+        gt_batch,
+        writer,
+        step,
+        device,
+        scheduler,
+        csv_writer,
+        csv_writer_2,
+):
+    diffusion_model.eval()
+    B, C, H, W = condition_batch.shape
+
+    scheduler.set_timesteps(50)
+    scheduler.alphas_cumprod = scheduler.alphas_cumprod.to(device)
+
+    x = torch.randn_like(condition_batch).to(device)
+    condition_batch = condition_batch.to(device)
+    gt_batch = gt_batch.to(device)
+
+    # --------------------------------------------------
+    # Monte Carlo sampling parameters
+    # --------------------------------------------------
+    S = 10  # number of sampled trajectories (8–16 is standard)
+
+    samples = []
+
+    # --------------------------------------------------
+    # Monte Carlo sampling
+    # --------------------------------------------------
+    for s in range(S):
+        x = torch.randn_like(condition_batch)
+
+        for t in scheduler.timesteps:
+            t_tensor = torch.tensor([t], device=device).long()
+            model_input = torch.cat([x, condition_batch], dim=1)
+
+            pred_noise = diffusion_model(
+                x=model_input,
+                timesteps=t_tensor,
+                context=None
+            )
+
+            x, _ = scheduler.step(pred_noise, t_tensor, x)
+
+        # pred_denoised = x
+        samples.append(x.cpu())
+
+    samples = torch.stack(samples, dim=0)  # (S, B, C, H, W)
+
+    # --------------------------------------------------
+    # Predictive mean and sampling variance
+    # --------------------------------------------------
+    pred_denoised = samples.mean(dim=0)
+    mc_uncertainty_map = samples.var(dim=0, unbiased=False)
+
+    # --------------------------------------------------
+    # Normalization helper
+    # --------------------------------------------------
+    def norm_percentile(x, pmin=1, pmax=99):
+        x = x.clone().to(torch.float32)
+        B = x.shape[0]
+        normed = torch.zeros_like(x)
+        for i in range(B):
+            x_i = x[i]
+            lo = torch.quantile(x_i, pmin / 100.0)
+            hi = torch.quantile(x_i, pmax / 100.0)
+            x_i = torch.clamp(x_i, lo, hi)
+            normed[i] = (x_i - lo) / (hi - lo + 1e-8)
+        return normed
+
+    # --------------------------------------------------
+    # Metrics & logging
+    # --------------------------------------------------
+    ld = condition_batch.cpu()
+    gt = gt_batch.cpu()
+    pred = pred_denoised.cpu()
+    unc = norm_percentile(mc_uncertainty_map).cpu()
+    error = norm_percentile(torch.abs(pred - gt))
+
+    fig, axes = plt.subplots(nrows=B, ncols=5, figsize=(8, 2.5 * B))
+    if B == 1:
+        axes = [axes]
+
+    for i in range(B):
+        images = [ld[i], gt[i], pred[i], unc[i], error[i]]
+        titles = ["T1", "T2", "Prediction", "MC-Dropout Unc.", "Error"]
+
+        gt_array = gt[i][0].numpy()
+        pred_array = pred[i][0].numpy()
+
+
+        # --- Calibration data ---
+        unc_raw = mc_uncertainty_map[i][0].cpu()
+        err_raw = (pred[i][0] - gt[i][0]).abs()
+
+        bin_u, bin_e, bin_n = collect_calibration_data(
+            unc_raw,
+            err_raw,
+            num_bins=15
+        )
+
+        # Log per-bin values for later plotting
+        for k in range(len(bin_u)):
+            csv_writer_2.writerow({
+                'Sample': step * B + i,
+                'Bin': k,
+                'Unc_mean': bin_u[k],
+                'Err_mean': bin_e[k],
+                'Count': bin_n[k],
+                'Type': 'calibration'
+            })
+
+
+        psnr = compute_psnr(
+            gt_array, pred_array,
+            data_range=gt_array.max() - gt_array.min()
+        )
+        ssim = compute_ssim(
+            gt_array, pred_array,
+            data_range=gt_array.max() - gt_array.min()
+        )
+        mse = np.mean((gt_array - pred_array) ** 2)
+        correlations_norm = map_correlations_multi_thresholds(unc[i][0].cpu().detach().numpy(), pred_array, gt_array)
+        correlations_unnorm = map_correlations_multi_thresholds(mc_uncertainty_map[i][0].cpu().detach().numpy(), pred_array, gt_array)
+
+        csv_writer.writerow({'Sample': step * B + i,
+                             'MSE': mse,
+                             'PSNR': psnr,
+                             'SSIM': ssim,
+                             'Pearson_u_norm': correlations_norm["pearson"],
+                             'Spearman_u_norm': correlations_norm["spearman"],
+                             'AUROC_top15_u_norm': correlations_norm["AUROC_top15"],
+                             'AUROC_top10_u_norm': correlations_norm["AUROC_top10"],
+                             'AUROC_top5_u_norm': correlations_norm["AUROC_top5"],
+                             'Pearson_u_unnorm': correlations_unnorm["pearson"],
+                             'Spearman_u_unnorm': correlations_unnorm["spearman"],
+                             'AUROC_top15_u_unnorm': correlations_unnorm["AUROC_top15"],
+                             'AUROC_top10_u_unnorm': correlations_unnorm["AUROC_top10"],
+                             'AUROC_top5_u_unnorm': correlations_unnorm["AUROC_top5"],
+                             })
+
+        for j in range(5):
+            ax = axes[i][j] if B > 1 else axes[0][j]
+            ax.set_axis_off()
+            ax.set_title(titles[j])
+            img = images[j].squeeze(0).numpy()
+            ax.imshow(img, cmap='hot' if titles[j] in ["MC-Dropout Unc.", "Error"] else 'gray')
+
+    plt.tight_layout()
+    writer.add_figure("Test/Inference_MC_Dropout", plt.gcf(), global_step=step)
+    plt.close()
+
+
+@torch.no_grad()
+def run_ddpm_vanilla_inference_and_log_MC_sampling_sparsification(
+        diffusion_model,
+        condition_batch,
+        gt_batch,
+        step,
+        device,
+        scheduler,
+        csv_writer,
+):
+    diffusion_model.eval()
+    B, C, H, W = condition_batch.shape
+
+    scheduler.set_timesteps(50)
+    scheduler.alphas_cumprod = scheduler.alphas_cumprod.to(device)
+
+    x = torch.randn_like(condition_batch).to(device)
+    condition_batch = condition_batch.to(device)
+    gt_batch = gt_batch.to(device)
+
+    # --------------------------------------------------
+    # Monte Carlo sampling parameters
+    # --------------------------------------------------
+    S = 10  # number of sampled trajectories (8–16 is standard)
+
+    samples = []
+
+    # --------------------------------------------------
+    # Monte Carlo sampling
+    # --------------------------------------------------
+    for s in range(S):
+        x = torch.randn_like(condition_batch)
+
+        for t in scheduler.timesteps:
+            t_tensor = torch.tensor([t], device=device).long()
+            model_input = torch.cat([x, condition_batch], dim=1)
+
+            pred_noise = diffusion_model(
+                x=model_input,
+                timesteps=t_tensor,
+                context=None
+            )
+
+            x, _ = scheduler.step(pred_noise, t_tensor, x)
+
+        # pred_denoised = x
+        samples.append(x.cpu())
+
+    samples = torch.stack(samples, dim=0)  # (S, B, C, H, W)
+
+    # --------------------------------------------------
+    # Predictive mean and sampling variance
+    # --------------------------------------------------
+    pred_denoised = samples.mean(dim=0)
+    mc_uncertainty_map = samples.var(dim=0, unbiased=False)
+
+    # --------------------------------------------------
+    # Metrics & logging
+    # --------------------------------------------------
+    ld = condition_batch.cpu()
+    gt = gt_batch.cpu()
+    pred = pred_denoised.cpu()
+
+    unc_raw =mc_uncertainty_map.cpu().detach()
+    err_raw = abs(pred - gt)
+
+    u = unc_raw.flatten()
+    e = err_raw.flatten()
+
+
+    fractions, curve = sparsification_curve(u, e, max_frac=0.95)
+    rand_curve = random_sparsification(e, fractions)
+    _, curve_oracle = sparsification_curve(e, e, max_frac=0.95)
+
+    for f, c, r, o in zip(fractions, curve, rand_curve, curve_oracle):
+        csv_writer.writerow({
+            'Sample': step * B,
+            'Fraction': f,
+            'Error': c,
+            'RandomError': r,
+            'OracleError': o,
+        })

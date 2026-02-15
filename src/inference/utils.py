@@ -45,6 +45,13 @@ def initialize_writers(
 
         return (csvfile, writer)
 
+    elif writer_type == "metrics_no_uncertainty":
+        csvfile= open(csv_path, mode='w', newline='')
+        fieldnames = ['Sample', 'MSE', 'PSNR', 'SSIM']
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+
+        return (csvfile, writer)
 
     elif writer_type == "calibration":
 
@@ -57,10 +64,10 @@ def initialize_writers(
         return (csvfile_2, writer_2)
 
 
-    elif writer_type == "sparrsification":
+    elif writer_type == "sparsification":
 
         csvfile = open(csv_path, mode='w', newline='')
-        fieldnames = ['Sample', 'Method', 'Fraction', 'Error', 'RandomError']
+        fieldnames = ['Sample', 'Fraction', 'Error', 'RandomError', 'OracleError']
 
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
@@ -94,12 +101,19 @@ def initialize_writers(
     else:
         raise ValueError(f"Unknown writer_type: {writer_type}")
 
-def sparsification_curve(u, e, num_steps=50):
+def sparsification_curve(u, e, num_steps=50, max_frac=0.99):
+    """
+    u: flattened uncertainty
+    e: flattened error
+    """
+
     sorted_idx = np.argsort(-u) # ordine degli indici dei pixel a incertezza decrescente
     e_sorted = e[sorted_idx]  # ordino l'errore in base all'ordine definito sopra
 
     N = len(e_sorted)  # lunghezza del vettore
-    fractions = np.linspace(0, 1, num_steps)
+
+    # Avoid alpha = 1
+    fractions = np.linspace(0, max_frac, num_steps)
     curve = []
 
     for frac in fractions:
@@ -111,36 +125,55 @@ def sparsification_curve(u, e, num_steps=50):
             remaining_error = e_sorted[k:]  # Remove top k pixels (quelli che corrispondono ad icnertezza maggiore in base alla mappa di incetezza)
             curve.append(remaining_error.mean()) # Compute mean error on remaining pixels
 
-    return fractions, np.array(curve)
+    curve = np.array(curve)
 
-def random_sparsification(e, fractions, trials=5):
+    # Normalize by initial error
+    curve = curve / curve[0]
+
+    return fractions[:len(curve)], np.array(curve)
+
+
+def random_sparsification(e, fractions, trials=10):
     N = len(e)
     avg_curve = np.zeros(len(fractions))
-    # Random ranking baseline  (l'ordinamento dei pixel non è più basato sulla mappa di incertezza ma è randomico
-    for _ in range(trials):  # medio su più tentativi
+
+    for _ in range(trials):
         perm = np.random.permutation(N)
         e_perm = e[perm]
 
         tmp = []
         for frac in fractions:
             k = int(frac * N)
-            if k >= N:
-                tmp.append(0.0)
-            else:
-                tmp.append(e_perm[k:].mean())
+            tmp.append(e_perm[k:].mean())
 
         avg_curve += np.array(tmp)
 
-    return avg_curve / trials
+    avg_curve /= trials
+
+    # Normalize
+    avg_curve /= avg_curve[0]
+
+    return avg_curve
+
 
 def compute_ause(fractions, curve):
-    """Area Under Sparsification Error (lower is better); it measures total residual error"""
-    return np.trapz(curve, fractions)
+    """
+    Normalized Area Under Sparsification Error (lower is better).
+    Fractions must be increasing and start at 0.
+    """
+    area = np.trapz(curve, fractions)
+    f_max = fractions[-1]
+    return area / f_max
+
 
 def compute_aurg(fractions, curve, rand_curve):
-    """Area Under Random Gap (higher is better); AURG measures gain over random"""
+    """
+    Normalized Area Under Random Gap (higher is better).
+    """
     gap = rand_curve - curve
-    return np.trapz(gap, fractions)
+    area = np.trapz(gap, fractions)
+    f_max = fractions[-1]
+    return area / f_max
 
 def map_correlations_multi_thresholds(unc_map, pred, gt, percentiles=(95, 90, 85)):
     """

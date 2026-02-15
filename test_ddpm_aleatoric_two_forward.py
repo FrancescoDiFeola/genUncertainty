@@ -98,7 +98,7 @@ if __name__ == '__main__':
     elif args.task == "MRtoCT":
 
         dataset = MRCTPaired(
-            csv_path= "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/mr_ct_dataset_train.csv",
+            csv_path= "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/mr_ct_dataset_test.csv",
             output_size=256,
         )
 
@@ -148,22 +148,24 @@ if __name__ == '__main__':
         print(len(dataset))
     """
 
-    if args.analyis == "sparsification":
+    if args.analysis == "sparsification":
 
         csv_path = os.path.join(experiment_dir, f"sparsification_epoch_{args.epoch}.csv")
         writer_csv = initialize_writers(csv_path, writer_type=args.analysis)[1]
 
-    elif args.analyis == "metrics":
+    elif args.analysis == "both":
 
         csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_image_uncertainty_train.csv")
         csv_path_2 = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_uncertainty_calibration_train.csv")
-        writer = initialize_writers(csv_path, writer_type=args.analysis)
-        writer_csv = writer[2]
-        writer_csv_2 = writer[3]
+        writer_ = initialize_writers(csv_path, csv_path_2, writer_type=args.analysis)
+        writer_csv = writer_[2]
+        writer_csv_2 = writer_[3]
 
+    # c = 0
     for step, batch in enumerate(loader):
 
-        if args.analyis == "sparsification":
+        # if c < 2:
+        if args.analysis == "sparsification":
 
             run_inference_and_log_v3_clean_unc_integral_sparsification(
                 diffusion_model=diffusion,
@@ -176,8 +178,8 @@ if __name__ == '__main__':
                 scheduler=scheduler,
                 csv_writer=writer_csv,
             )
+        elif  args.analysis == "both":
 
-        elif  args.analyis == "metrics":
             run_inference_and_log_v3_clean_unc_integral(
                 diffusion_model=diffusion,
                 context_encoder=spatial_encoder,
@@ -192,6 +194,9 @@ if __name__ == '__main__':
                 csv_writer=writer_csv,
                 csv_writer_2=writer_csv_2,
             )
+        #    c+=1
+        # else:
+        #    continue
 
 
     print(f"✅ Inference complete. Metrics saved to {csv_path}")

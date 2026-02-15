@@ -182,8 +182,8 @@ import numpy as np
 # CONFIG
 # ============================================================
 
-ROOT_DIR = "/Users/francescodifeola/Desktop/omega/uncertainty/results/denoising/FM/baseline"   # <-- change this
-OUTPUT_CSV = "/Users/francescodifeola/Desktop/omega/uncertainty/results/denoising/FM/summary_metrics.csv"
+ROOT_DIR = "/Users/francescodifeola/Desktop/omega/uncertainty/results/MRCT/DDPM/baseline"   # <-- change this
+OUTPUT_CSV = "/Users/francescodifeola/Desktop/omega/uncertainty/results/MRCT/summary_metrics.csv"
 
 METRICS = [
     "MSE",
@@ -265,29 +265,34 @@ df = pd.read_csv("/Users/francescodifeola/Desktop/omega/uncertainty/results/T1T2
 ###############################
 import pandas as pd
 
-df = pd.read_csv("sparsification_results.csv")
+df = pd.read_csv("/Users/francescodifeola/Desktop/omega/uncertainty/results/denoising/DDPM/baseline/self_refining/sparsification_epoch_300.csv")
 
-for method in df['Method'].unique():
-    df_m = df[df['Method'] == method]
-    grouped = df_m.groupby('Fraction').mean()
 
-    fractions = grouped.index.values
-    mean_curve = grouped['Error'].values
-    mean_random = grouped['RandomError'].values
+# df_m = df[df['Method'] == method]
+grouped = df.groupby('Fraction').mean()
 
-    ause = compute_ause(fractions, mean_curve)
-    aurg = compute_aurg(fractions, mean_curve, mean_random)
+fractions = grouped.index.values
+mean_curve = grouped['Error'].values
+mean_random = grouped['RandomError'].values
+mean_oracle = grouped['OracleError'].values
 
-    print(method, "AUSE:", ause, "AURG:", aurg)
+ause = compute_ause(fractions, mean_curve)
+ause_r = compute_ause(fractions, mean_random)
+ause_o = compute_ause(fractions, mean_oracle)
+aurg_o = compute_aurg(fractions, mean_oracle, mean_random)
+aurg = compute_aurg(fractions, mean_curve, mean_random)
 
-# plt.figure()
+print("AUSE_our:", ause, "AUSE_oracle:", ause_o, "AUSE_random:", ause_r, "AURG_our:", aurg, "AURG_oracle:", aurg_o)
 
-# plt.plot(fractions, mean_curve_refine, label="REFINE")
+plt.figure()
+
+plt.plot(fractions, mean_curve, label="Our")
 # plt.plot(fractions, mean_curve_mc, label="MC-Sampling")
-# plt.plot(fractions, mean_random, linestyle='--', label="Random")
+plt.plot(fractions, mean_random, linestyle='--', label="Random")
+plt.plot(fractions, mean_oracle, linestyle=':', label="Oracle")
 
-# plt.xlabel("Fraction of removed pixels")
-# plt.ylabel("Remaining L1 Error")
-# plt.legend()
-# plt.grid(True)
-# plt.show()
+plt.xlabel("Fraction of removed pixels")
+plt.ylabel("Remaining L1 Error")
+plt.legend()
+plt.grid(True)
+plt.show()

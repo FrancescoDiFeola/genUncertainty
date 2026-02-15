@@ -58,7 +58,7 @@ cd /mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion
 # python3 ./train_RF_v2.py --num_workers 8 --experiment_name "RF_T1T2_v2"
 # python3 ./train_RF_aleatoric.py --num_workers 8 --experiment_name "RF_aleatoric" --task "T1T2_Oasis" --in_ch 2 --out_ch 1 --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase train --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
 # python3 ./train_RF_aleatoric_v2.py --num_workers 8 --experiment_name "RF_T1T2_aleatoric_v2"
-python3 ./train_RF_aleatoric_two_forward.py --num_workers 8 --experiment_name "RF_aleatoric_two_forward" --spatial_enc_channels 1 --task "T1T2_Oasis" --in_ch 2 --out_ch 1 --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase train --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
+# python3 ./train_RF_aleatoric_two_forward.py --num_workers 8 --experiment_name "RF_aleatoric_two_forward" --spatial_enc_channels 1 --task "T1T2_Oasis" --in_ch 2 --out_ch 1 --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase train --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
 
 # python3 ./train_LFM.py --num_workers 8 --experiment_name "LFM_CTPET" --task "CTPET" --in_ch 6 --out_ch 3 --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/FDG-PEt_CT-lesion/lung_slices"  --phase train --slice_range 0 10000 --mri_modalities CT PET --under_sample_dataset
 # python3 ./train_LFM_aleatoric.py --num_workers 8 --experiment_name "LFM_aleatoric_CTPET" --task "CTPET" --in_ch 6 --out_ch 3 --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/FDG-PEt_CT-lesion/lung_slices"  --phase train --slice_range 0 10000 --mri_modalities CT PET --under_sample_dataset
@@ -103,7 +103,8 @@ python3 ./train_RF_aleatoric_two_forward.py --num_workers 8 --experiment_name "R
 
 # python3 ./train_LDM.py --num_workers 8 --experiment_name "LDM_CTPET" --task "CTPET" --in_ch 6 --out_ch 3 --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/FDG-PEt_CT-lesion/lung_slices"  --phase train --slice_range 0 10000 --mri_modalities CT PET --under_sample_dataset
 # python3 ./train_LDM_aleatoric.py --num_workers 8 --experiment_name "LDM_aleatoric_CTPET" --task "CTPET" --in_ch 6 --out_ch 3 --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/FDG-PEt_CT-lesion/lung_slices"  --phase train --slice_range 0 10000 --mri_modalities CT PET --under_sample_dataset
-# python3 ./train_LDM_aleatoric_two_forward.py --num_workers 8 --experiment_name "LDM_aleatoric_two_forward_CTPET" --spatial_enc_channels 3 --task "CTPET" --in_ch 6 --out_ch 3 --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/FDG-PEt_CT-lesion/lung_slices"  --phase train --slice_range 0 10000 --mri_modalities CT PET --under_sample_dataset
+python3 ./train_LDM_aleatoric_two_forward.py --num_workers 8 --experiment_name "LDM_aleatoric_two_forward" --spatial_enc_channels 3 --task "MRtoCT" --in_ch 6 --out_ch 3
+# --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/FDG-PEt_CT-lesion/lung_slices"  --phase train --slice_range 0 10000 --mri_modalities CT PET --under_sample_dataset
 
 # python3 ./test_LDM.py  --num_workers 8 --experiment_name "LDM_T1T2" --task "T1T2" --epoch "300" --in_ch 6 --out_ch 3
 # python3 ./test_LDM_aleatoric.py  --num_workers 8 --experiment_name "LDM_aleatoric_denoising" --task "denoising" --epoch "50" --in_ch 6 --out_ch 3
