@@ -185,7 +185,7 @@ if __name__ == '__main__':
     # -----------------------
     # ✅ Load diffusion model
     # -----------------------
-    diffusion = networks.init_ddpm(args.in_ch, args.out_ch, args.diff_ckpt).to(DEVICE)
+    diffusion = networks.init_ddpm_aleatoric(args.in_ch, args.out_ch, args.diff_ckpt).to(DEVICE)
 
     if NUM_GPUS > 1:
         print(f"Using {NUM_GPUS} GPUs")

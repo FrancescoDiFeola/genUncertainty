@@ -120,8 +120,8 @@ if __name__ == '__main__':
 
     elif args.analysis == "both":
 
-        csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_image_uncertainty_train.csv")
-        csv_path_2 = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_uncertainty_calibration_train.csv")
+        csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_image_uncertainty.csv")
+        csv_path_2 = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_uncertainty_calibration.csv")
         writer_ = initialize_writers(csv_path, csv_path_2, writer_type=args.analysis)
         writer_csv = writer_[2]
         writer_csv_2 = writer_[3]

@@ -167,7 +167,7 @@ if __name__ == '__main__':
                         csv_writer_2=writer_csv_2
                     )
 
-                print(f"✅ Inference complete. Metrics saved to {csv_path}")
+            print(f"✅ Inference complete. Metrics saved to {csv_path}")
     else:
 
         for step, batch in enumerate(loader):

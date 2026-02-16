@@ -997,6 +997,286 @@ def run_inference_LDM_self_refining_and_log_uncertainty_propagation_sparsificati
             'OracleError': o,
         })
 
+@torch.no_grad()
+def run_inference_LDM_self_refining_and_log_uncertainty_propagation_ablation(
+        diffusion_model,
+        autoencoder,
+        context_encoder,
+        writer,
+        channels,
+        condition_batch,
+        gt_batch,
+        step,
+        device,
+        scheduler,
+        scaling,
+        csv_writer,
+        mc_decode_samples: int = 20,
+        K: int = 10,   # number of late denoising steps used for uncertainty aggregation
+):
+    # ------------------------------------------------------------------
+    # Evaluation mode: no dropout, no batchnorm updates
+    # ------------------------------------------------------------------
+    diffusion_model.eval()
+    autoencoder.eval()
+
+    # ------------------------------------------------------------------
+    # Basic shapes and setup
+    # condition_batch and x live in LATENT space
+    # ------------------------------------------------------------------
+    B, C, H, W = condition_batch.shape
+
+    scheduler.set_timesteps(50)
+    scheduler.alphas_cumprod = scheduler.alphas_cumprod.to(device)
+
+    # ------------------------------------------------------------------
+    # Initial noisy latent z_T ~ N(0, I)
+    # This defines a single deterministic diffusion trajectory
+    # ------------------------------------------------------------------
+    x = torch.randn_like(condition_batch).to(device)
+
+    condition_batch = condition_batch.to(device)
+    gt_batch = gt_batch.to(device)
+    num_steps = len(scheduler.timesteps)
+
+    # ==================================================
+    # Accumulator for decision-time latent uncertainty
+    #
+    # U_z0 will store the SUM of propagated variances
+    # Var(z0 | t) across the last K denoising steps.
+    #
+    # This represents uncertainty of the reverse estimator,
+    # NOT stochasticity of the diffusion process.
+    # ==================================================
+    U_z0 = torch.zeros_like(x)
+    num_valid_steps = 0
+
+    # ==================================================
+    # DDIM sampling in latent space
+    #
+    # We follow a standard deterministic DDIM trajectory.
+    # Uncertainty is accumulated but NEVER injected into x.
+    # ==================================================
+    for i, t in enumerate(tqdm(scheduler.timesteps, desc="DDIM Sampling")):
+
+        t_tensor = torch.tensor([t], device=device).long()
+        model_input = torch.cat([x, condition_batch], dim=1)
+
+        # --------------------------------------------------
+        # Reverse model outputs:
+        #  - pred_noise: mean estimate of ε
+        #  - pred_logvar: learned log-variance of ε
+        #
+        # The variance head models predictive uncertainty
+        # of the reverse estimator at this denoising step.
+        # --------------------------------------------------
+
+        # -----------------------------
+        # 🌀 First Pass: no context (baseline prediction)
+        # -----------------------------
+        model_input = torch.cat([x, condition_batch], dim=1)
+
+        with (autocast(enabled=True)):
+            if i == 0:
+                dummy_context = torch.zeros((B, 1, 128), device=device)
+                pred_error_1, pred_logvar_1 = diffusion_model(
+                    x=model_input,
+                    timesteps=t_tensor,
+                    context=dummy_context
+                )
+            else:
+                pred_error_1 = pred_error_2
+                pred_logvar_1 = pred_logvar_2
+
+            # Compute normalized uncertainty map for context
+            uncertainty_map = torch.exp(pred_logvar_1)
+            norm_uncertainty_map = norm_percentile(uncertainty_map)
+
+            if channels == 2:
+                # Concatenate predicted error and normalized uncertainty for conditioning
+                context_input = torch.cat([norm_percentile(pred_error_1), norm_uncertainty_map], dim=1)  # (B, 2, H, W). # norm_uncertainty_map
+            else:
+                context_input = norm_uncertainty_map
+
+            context_vector = context_encoder(torch.zeros_like(context_input))
+        # -----------------------------
+        # 🔁 Second Pass: conditioned refinement
+        # -----------------------------
+        with autocast(enabled=True):
+            pred_error_2, pred_logvar_2 = diffusion_model(
+                x=model_input,
+                timesteps=t_tensor,
+                context=context_vector
+            )
+
+        # ==================================================
+        # Accumulate late-step decision-time uncertainty
+        #
+        # We only consider the LAST K steps (excluding final),
+        # where the signal-to-noise ratio is high and uncertainty
+        # correlates with final reconstruction error.
+        #
+        # Early steps are ignored as they are noise-dominated.
+        # ==================================================
+        if (num_steps - K - 1) <= i < (num_steps - 1):
+
+            # --------------------------------------------------
+            # ᾱ_t controls how ε uncertainty propagates to z0
+            # --------------------------------------------------
+            a_bar = scheduler.alphas_cumprod[t].view(-1, 1, 1, 1)
+
+            # --------------------------------------------------
+            # Learned variance in ε-space
+            # This is the ONLY source of uncertainty
+            # --------------------------------------------------
+            var_eps = torch.exp(pred_logvar_2.float())
+
+            # --------------------------------------------------
+            # Analytic propagation from ε-space to z0-space:
+            #
+            # Var(z0 | t) = (1 - ᾱ_t) / ᾱ_t · Var(ε)
+            #
+            # This follows directly from the DDPM formulation
+            # and does NOT involve sampling.
+            # --------------------------------------------------
+            var_z0_t = (1.0 - a_bar) / (a_bar + 1e-8) * var_eps
+
+            # --------------------------------------------------
+            # If variance head is single-channel but latent
+            # has multiple channels, broadcast uncertainty.
+            # This assumes channel-wise independence.
+            # --------------------------------------------------
+            if var_z0_t.shape[1] == 1 and x.shape[1] > 1:
+                var_z0_t = var_z0_t.expand(-1, x.shape[1], -1, -1)
+
+            # --------------------------------------------------
+            # Accumulate uncertainty across late steps
+            # --------------------------------------------------
+            U_z0 += var_z0_t
+            num_valid_steps += 1
+
+        # ==================================================
+        # Deterministic DDIM update
+        #
+        # Note: uncertainty does NOT affect the trajectory.
+        # ==================================================
+        x, _ = scheduler.step(pred_error_2, t_tensor, x)
+
+    # ======================================================
+    # Final latent mean and aggregated uncertainty
+    #
+    # pred_denoised_latent is the mean prediction μ_z0
+    # ======================================================
+    pred_denoised_latent = x
+
+    # --------------------------------------------------
+    # Average accumulated variance across K steps
+    # --------------------------------------------------
+    var_z0 = U_z0 / max(num_valid_steps, 1)
+
+    # --------------------------------------------------
+    # Convert variance to standard deviation
+    #
+    # Required because we will SAMPLE latent perturbations.
+    # --------------------------------------------------
+    sigma_z0 = torch.sqrt(var_z0.clamp_min(1e-12))
+
+    # ==================================================
+    # Decode the latent mean to pixel space
+    #
+    # This is the final reconstructed image.
+    # ==================================================
+    pred_denoised = autoencoder.decode(pred_denoised_latent / scaling)
+    condition_dec = autoencoder.decode(condition_batch / scaling)
+
+    # ==================================================
+    # Monte Carlo decoding of learned uncertainty
+    #
+    # This approximates propagation through the decoder
+    # Jacobian without explicitly computing it.
+    #
+    # z0^(s) = μ_z0 + σ_z0 ⊙ ε_s
+    # x^(s)  = D(z0^(s))
+    # ==================================================
+    decoded_samples = []
+    for _ in range(mc_decode_samples):
+        eps = torch.randn_like(pred_denoised_latent)
+        z0_s = pred_denoised_latent + sigma_z0 * eps
+        x_s = autoencoder.decode(z0_s / scaling)
+        decoded_samples.append(x_s)
+
+    decoded_samples = torch.stack(decoded_samples, dim=0)
+
+    # --------------------------------------------------
+    # Pixel-space uncertainty = variance of decoded samples
+    # --------------------------------------------------
+    uncertainty_map = decoded_samples.var(dim=0, unbiased=False)
+
+    # ==================================================
+    # Metrics & logging
+    #
+    # Uncertainty is evaluated ONLY here, not during
+    # generation or decoding.
+    # ==================================================
+    ld = condition_dec.cpu().detach()
+    gt = gt_batch.cpu().detach()
+    pred = pred_denoised.cpu().detach()
+    unc = norm_percentile(uncertainty_map).cpu().detach()
+    error = norm_percentile(torch.abs(pred - gt))
+
+    fig, axes = plt.subplots(nrows=B, ncols=5, figsize=(8, 2.5 * B))
+    if B == 1:
+        axes = [axes]
+
+    for i in range(B):
+        images = [ld[i], gt[i], pred[i], unc[i], error[i]]
+        titles = ["T1", "T2", "Prediction", "Uncertainty", "Error"]
+
+        gt_array = gt[i][0].numpy()
+        pred_array = pred[i][0].numpy()
+
+        psnr = compute_psnr(
+            gt_array, pred_array,
+            data_range=gt_array.max() - gt_array.min()
+        )
+        ssim = compute_ssim(
+            gt_array, pred_array,
+            data_range=gt_array.max() - gt_array.min()
+        )
+        mse = np.mean((gt_array - pred_array) ** 2)
+
+        correlations_norm = map_correlations_multi_thresholds(
+            unc[i][0].numpy(), pred_array, gt_array)
+        correlations_unnorm = map_correlations_multi_thresholds(
+            uncertainty_map[i][0].cpu().detach().numpy(), pred_array, gt_array)
+
+        csv_writer.writerow({
+            'Sample': step * B + i,
+            'MSE': mse,
+            'PSNR': psnr,
+            'SSIM': ssim,
+            'Pearson_u_norm': correlations_norm["pearson"],
+            'Spearman_u_norm': correlations_norm["spearman"],
+            'AUROC_top15_u_norm': correlations_norm["AUROC_top15"],
+            'AUROC_top10_u_norm': correlations_norm["AUROC_top10"],
+            'AUROC_top5_u_norm': correlations_norm["AUROC_top5"],
+            'Pearson_u_unnorm': correlations_unnorm["pearson"],
+            'Spearman_u_unnorm': correlations_unnorm["spearman"],
+            'AUROC_top15_u_unnorm': correlations_unnorm["AUROC_top15"],
+            'AUROC_top10_u_unnorm': correlations_unnorm["AUROC_top10"],
+            'AUROC_top5_u_unnorm': correlations_unnorm["AUROC_top5"],
+        })
+
+        for j in range(5):
+            ax = axes[i][j]
+            ax.set_axis_off()
+            ax.set_title(titles[j])
+            img = images[j].squeeze(0).numpy()
+            ax.imshow(img, cmap='hot' if titles[j] in ["Uncertainty", "Error"] else 'gray')
+
+    plt.tight_layout()
+    writer.add_figure("Test/Inference_LDM_Uncertainty", plt.gcf(), global_step=step)
+    plt.close()
 ############################### LDM aleatoric #####################################
 
 @torch.no_grad()

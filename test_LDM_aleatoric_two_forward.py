@@ -34,6 +34,7 @@ if __name__ == '__main__':
     parser.add_argument('--epoch', default=None, type=str)
     parser.add_argument('--experiment_name', type=str, required=True)
     parser.add_argument('--task', required=True, type=str)
+    parser.add_argument('--ablation', action="store_true")
     parser.add_argument('--analysis', type=str, required=False)
     parser.add_argument('--batch_size', default=1, type=int)
     parser.add_argument('--num_workers', default=4, type=int)
@@ -101,10 +102,10 @@ if __name__ == '__main__':
 
     elif args.task == "denoising":
         dataset = LDCTHDCTDataset(
-            annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_LOWDOSE.csv',
-            annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_FULLDOSE.csv',
-            # annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D2/annotations_test_lowdose_GAN_D2_nuovo_ordinato.csv',
-            # annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D2/annotations_test_fulldose_GAN_D2_nuovo_ordinato.csv',
+            # annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_LOWDOSE.csv',
+            # annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_FULLDOSE.csv',
+            annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D2/annotations_test_lowdose_GAN_D2_nuovo_ordinato.csv',
+            annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D2/annotations_test_fulldose_GAN_D2_nuovo_ordinato.csv',
         )
         scaling_factor = 7.832608
 
@@ -158,8 +159,8 @@ if __name__ == '__main__':
 
     elif args.analysis == "metrics":
 
-        csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_image_uncertainty_train.csv")
-        writer_csv = initialize_writers(csv_path, writer_type=args.analysis)
+        csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_image_uncertainty_w_o_IR_ablation.csv")
+        writer_csv = initialize_writers(csv_path, writer_type=args.analysis)[1]
 
 
     for step, batch in enumerate(loader):
@@ -172,11 +173,11 @@ if __name__ == '__main__':
         img_A_latent = img_A_latent * scaling_factor
 
         if args.analysis == "sparsification":
+
             run_inference_LDM_self_refining_and_log_uncertainty_propagation_sparsification(
                 diffusion_model=diffusion,
                 autoencoder=autoencoder,
                 context_encoder=spatial_encoder,
-                writer=writer,
                 channels=args.spatial_enc_channels,
                 condition_batch=img_A_latent,
                 gt_batch=batch['B'],
@@ -188,18 +189,39 @@ if __name__ == '__main__':
             )
 
         elif args.analysis == "metrics":
-            run_inference_LDM_self_refining_and_log_uncertainty_propagation(
-                diffusion_model=diffusion,
-                autoencoder=autoencoder,
-                context_encoder=spatial_encoder,
-                channels=args.spatial_enc_channels,
-                condition_batch=img_A_latent,
-                gt_batch=batch['B'],
-                step=step,
-                device=DEVICE,
-                scheduler=scheduler,
-                scaling=scaling_factor,
-                csv_writer=writer_csv
-            )
+
+            if args.ablation:
+
+                run_inference_LDM_self_refining_and_log_uncertainty_propagation_ablation(
+                    diffusion_model=diffusion,
+                    autoencoder=autoencoder,
+                    context_encoder=spatial_encoder,
+                    writer=writer,
+                    channels=args.spatial_enc_channels,
+                    condition_batch=img_A_latent,
+                    gt_batch=batch['B'],
+                    step=step,
+                    device=DEVICE,
+                    scheduler=scheduler,
+                    scaling=scaling_factor,
+                    csv_writer=writer_csv
+                )
+
+            else:
+
+                run_inference_LDM_self_refining_and_log_uncertainty_propagation(
+                    diffusion_model=diffusion,
+                    autoencoder=autoencoder,
+                    context_encoder=spatial_encoder,
+                    writer=writer,
+                    channels=args.spatial_enc_channels,
+                    condition_batch=img_A_latent,
+                    gt_batch=batch['B'],
+                    step=step,
+                    device=DEVICE,
+                    scheduler=scheduler,
+                    scaling=scaling_factor,
+                    csv_writer=writer_csv
+                )
 
     print(f"✅ Inference complete. Metrics saved to {csv_path}")

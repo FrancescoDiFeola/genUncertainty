@@ -32,6 +32,7 @@ if __name__ == '__main__':
     parser.add_argument('--epoch', default=None, type=str)
     parser.add_argument('--experiment_name', type=str, required=True)
     parser.add_argument('--task', required=True, type=str)
+    parser.add_argument('--ablation', action="store_true")
     parser.add_argument('--analysis', type=str, required=False)
     parser.add_argument('--batch_size', default=1, type=int)
     parser.add_argument('--num_workers', default=4, type=int)
@@ -154,13 +155,13 @@ if __name__ == '__main__':
 
     if args.analysis == "sparsification":
 
-        csv_path = os.path.join(experiment_dir, f"sparsification_K_10_epoch_{args.epoch}.csv")
+        csv_path = os.path.join(experiment_dir, f"sparsification_K_30_epoch_{args.epoch}.csv")
         writer_csv = initialize_writers(csv_path, writer_type=args.analysis)[1]
 
     elif args.analysis == "metrics":
 
-        csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_image_uncertainty_K_10_train.csv")
-        writer_csv = initialize_writers(csv_path, writer_type=args.analysis)
+        csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_image_uncertainty_K_30_w_o_IR_ablation.csv")
+        writer_csv = initialize_writers(csv_path, writer_type=args.analysis)[1]
 
     for step, batch in enumerate(loader):
         img_A = batch["A"].to(DEVICE)
@@ -184,24 +185,43 @@ if __name__ == '__main__':
                 scheduler=scheduler,
                 scaling=scaling_factor,
                 csv_writer=writer_csv,
-                K=10,
+                K=30,
             )
 
         elif args.analysis == "metrics":
 
-            run_inference_LFM_self_refining_and_log_uncertainty_propagation(
-                diffusion_model=diffusion,
-                autoencoder=autoencoder,
-                context_encoder=spatial_encoder,
-                writer=writer,
-                condition_batch=img_A_latent,
-                gt_batch=batch['B'],
-                step=step,
-                device=DEVICE,
-                scheduler=scheduler,
-                scaling=scaling_factor,
-                csv_writer=writer_csv,
-                K=10,
-            )
+            if args.ablation:
+
+                run_inference_LFM_self_refining_and_log_uncertainty_propagation_ablation(
+                    diffusion_model=diffusion,
+                    autoencoder=autoencoder,
+                    context_encoder=spatial_encoder,
+                    writer=writer,
+                    condition_batch=img_A_latent,
+                    gt_batch=batch['B'],
+                    step=step,
+                    device=DEVICE,
+                    scheduler=scheduler,
+                    scaling=scaling_factor,
+                    csv_writer=writer_csv,
+                    K=30,
+                )
+
+            else:
+
+                run_inference_LFM_self_refining_and_log_uncertainty_propagation(
+                    diffusion_model=diffusion,
+                    autoencoder=autoencoder,
+                    context_encoder=spatial_encoder,
+                    writer=writer,
+                    condition_batch=img_A_latent,
+                    gt_batch=batch['B'],
+                    step=step,
+                    device=DEVICE,
+                    scheduler=scheduler,
+                    scaling=scaling_factor,
+                    csv_writer=writer_csv,
+                    K=30,
+                )
 
     print(f"✅ Inference complete. Metrics saved to {csv_path}")

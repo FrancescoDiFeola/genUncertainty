@@ -32,6 +32,7 @@ if __name__ == '__main__':
     parser.add_argument('--diff_ckpt', type=str, required=False)
     parser.add_argument('--analysis', type=str, required=False)
     parser.add_argument('--task', required=True, type=str)
+    parser.add_argument('--ablation', action="store_true")
     parser.add_argument('--context_ckpt', type=str, required=False)
     parser.add_argument('--in_ch', default=2, type=int)
     parser.add_argument('--out_ch', default=1, type=int)
@@ -155,8 +156,8 @@ if __name__ == '__main__':
 
     elif args.analysis == "both":
 
-        csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_image_uncertainty_train.csv")
-        csv_path_2 = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_uncertainty_calibration_train.csv")
+        csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_image_uncertainty_w_o_IR_ablation.csv")
+        csv_path_2 = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_uncertainty_calibration_w_o_IR_ablation.csv")
         writer_ = initialize_writers(csv_path, csv_path_2, writer_type=args.analysis)
         writer_csv = writer_[2]
         writer_csv_2 = writer_[3]
@@ -180,20 +181,40 @@ if __name__ == '__main__':
             )
         elif  args.analysis == "both":
 
-            run_inference_and_log_v3_clean_unc_integral(
-                diffusion_model=diffusion,
-                context_encoder=spatial_encoder,
-                channels=args.spatial_enc_channels,
-                dir=experiment_dir,
-                condition_batch=batch['A'],
-                gt_batch=batch['B'],
-                writer=writer,
-                step=step,
-                device=DEVICE,
-                scheduler=scheduler,
-                csv_writer=writer_csv,
-                csv_writer_2=writer_csv_2,
-            )
+            if args.ablation:
+
+                run_inference_and_log_v3_clean_unc_integral_ablation(
+                    diffusion_model=diffusion,
+                    context_encoder=spatial_encoder,
+                    channels=args.spatial_enc_channels,
+                    dir=experiment_dir,
+                    condition_batch=batch['A'],
+                    gt_batch=batch['B'],
+                    writer=writer,
+                    step=step,
+                    device=DEVICE,
+                    scheduler=scheduler,
+                    csv_writer=writer_csv,
+                    csv_writer_2=writer_csv_2,
+
+                )
+
+            else:
+
+                run_inference_and_log_v3_clean_unc_integral(
+                    diffusion_model=diffusion,
+                    context_encoder=spatial_encoder,
+                    channels=args.spatial_enc_channels,
+                    dir=experiment_dir,
+                    condition_batch=batch['A'],
+                    gt_batch=batch['B'],
+                    writer=writer,
+                    step=step,
+                    device=DEVICE,
+                    scheduler=scheduler,
+                    csv_writer=writer_csv,
+                    csv_writer_2=writer_csv_2,
+                )
         #    c+=1
         # else:
         #    continue

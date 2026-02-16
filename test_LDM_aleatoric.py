@@ -148,8 +148,8 @@ if __name__ == '__main__':
 
     elif args.analysis == "metrics":
 
-        csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_image_uncertainty_train.csv")
-        writer_csv = initialize_writers(csv_path, writer_type=args.analysis)
+        csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_image_uncertainty.csv")
+        writer_csv = initialize_writers(csv_path, writer_type=args.analysis)[1]
 
     for step, batch in enumerate(loader):
         img_A = batch["A"].to(DEVICE)

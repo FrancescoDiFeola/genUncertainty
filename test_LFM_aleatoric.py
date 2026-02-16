@@ -143,13 +143,13 @@ if __name__ == '__main__':
 
     if args.analysis == "sparsification":
 
-        csv_path = os.path.join(experiment_dir, f"sparsification__K_10_epoch_{args.epoch}.csv")
+        csv_path = os.path.join(experiment_dir, f"sparsification__K_30_epoch_{args.epoch}.csv")
         writer_csv = initialize_writers(csv_path, writer_type=args.analysis)[1]
 
     elif args.analysis == "metrics":
 
-        csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_image_uncertainty_K_10_train.csv")
-        writer_csv = initialize_writers(csv_path, writer_type=args.analysis)
+        csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_image_uncertainty_K_30.csv")
+        writer_csv = initialize_writers(csv_path, writer_type=args.analysis)[1]
 
     for step, batch in enumerate(loader):
         img_A = batch["A"].to(DEVICE)
@@ -172,7 +172,7 @@ if __name__ == '__main__':
                 scheduler=scheduler,
                 scaling=scaling_factor,
                 csv_writer=writer_csv,
-                K=10,
+                K=30,
             )
 
         elif args.analysis == "metrics":
@@ -188,7 +188,7 @@ if __name__ == '__main__':
                 scheduler=scheduler,
                 scaling=scaling_factor,
                 csv_writer=writer_csv,
-                K=10,
+                K=30,
             )
 
     print(f"✅ Inference complete. Metrics saved to {csv_path}")
