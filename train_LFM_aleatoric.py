@@ -104,7 +104,7 @@ if __name__ == '__main__':
     experiment_dir = os.path.join(f"{args.output_dir}/{args.task}", args.experiment_name)
     os.makedirs(experiment_dir, exist_ok=True)
 
-    args.VAE_ckpt = os.path.join(args.output_dir, args.task, "VAE")
+    args.VAE_ckpt = os.path.join(args.output_dir, "T1T2", "VAE")
     # -----------------------
     # ✅ Load dataset
     # -----------------------
@@ -154,6 +154,11 @@ if __name__ == '__main__':
             annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_FULLDOSE.csv',
         )
         scaling_factor = 7.832608
+
+    elif args.task == "T1T2_Oasis":
+
+        dataset = Mri2DSlicedataset(args)
+        scaling_factor = 9.404202
 
     train_loader = DataLoader(dataset=dataset,
                               batch_size=args.batch_size,
@@ -270,7 +275,7 @@ if __name__ == '__main__':
 
         writer.add_scalar('train/epoch_loss', epoch_loss / len(train_loader), epoch)
 
-        if epoch % 50 == 0:
+        if (epoch % 20 == 0 or epoch % 50 == 0):
             # Save the model after each epoch.
             torch.save(diffusion.state_dict(), os.path.join(experiment_dir, f'diffusion-ep-{epoch + args.epoch_start}.pth'))
 

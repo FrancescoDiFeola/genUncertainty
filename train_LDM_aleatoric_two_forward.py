@@ -335,6 +335,11 @@ if __name__ == '__main__':
             csv_path= "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/mr_ct_dataset_train.csv",
             output_size=256,
         )
+        scaling_factor = 6.640712
+
+    elif args.task == "T1T2_Oasis":
+        dataset = Mri2DSlicedataset(args)
+        scaling_factor = 7.832608
 
     train_loader = DataLoader(dataset=dataset,
                               batch_size=args.batch_size,

@@ -182,8 +182,8 @@ import numpy as np
 # CONFIG
 # ============================================================
 
-ROOT_DIR = "/Users/francescodifeola/Desktop/omega/uncertainty/results/MRCT/DDPM/baseline"   # <-- change this
-OUTPUT_CSV = "/Users/francescodifeola/Desktop/omega/uncertainty/results/MRCT/summary_metrics.csv"
+ROOT_DIR = "/Users/francescodifeola/Desktop/omega/uncertainty/results/CTPET/LFM/"   # <-- change this
+OUTPUT_CSV = "/Users/francescodifeola/Desktop/omega/uncertainty/results/CTPET/LFM/summary_metrics.csv"
 
 METRICS = [
     "MSE",

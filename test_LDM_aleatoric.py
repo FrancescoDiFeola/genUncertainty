@@ -12,6 +12,7 @@ from src.brlp.CTPET_dataset import CTPETDataset
 from src.brlp.CS_dataset import CityscapesColorDataset
 from src.brlp.Mri2DSlice_dataset import Mri2DSlicedataset
 from src.brlp.ND_dataset import PairedImageDataset
+from src.brlp.MR_to_CT import  MRCTPaired
 from src.VAE.utils.checkpoints_utils import load_checkpoint
 from src.inference.inference_LDM import *
 from src.inference.utils import initialize_writers
@@ -98,6 +99,13 @@ if __name__ == '__main__':
         )
         scaling_factor = 7.832608
 
+    elif args.task == "MRtoCT":
+
+        dataset = MRCTPaired(
+            csv_path= "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/mr_ct_dataset_train.csv",
+            output_size=256,
+        )
+        scaling_factor = 6.640712
 
     loader = DataLoader(dataset,
                         batch_size=args.batch_size,

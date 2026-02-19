@@ -161,18 +161,34 @@ class Mri2DSlicedataset(Dataset):
         subject = sample_info["subject"]
         slice_idx = sample_info["slice_idx"]
 
+        # Calculate padding if necessary
+        def pad_to_256(image):
+            pad_h = max(256 - image.shape[1], 0)
+            pad_w = max(256 - image.shape[2], 0)
+            # Pad equally on both sides of each dimension
+            padding = ((0, 0), (pad_h // 2, pad_h - pad_h // 2), (pad_w // 2, pad_w - pad_w // 2))
+            return np.pad(image, padding, mode='constant', constant_values=-1)
+
         A_path = self.subject_dict[subject][self.A_mod][slice_idx]
         B_path = self.subject_dict[subject][self.B_mod][slice_idx]
 
         A = np.load(A_path).astype(np.float32)
         B = np.load(B_path).astype(np.float32)
+        A = np.expand_dims(A, axis=0)  # Add a channel at the start (axis=0)
+        B = np.expand_dims(B, axis=0)
 
         # Slices are in range 0-1, we map it to -1 1 to be coherent with TanH in CycleGAN
         A = A * 2 - 1
         B = B * 2 - 1
 
-        A = np.expand_dims(A, axis=0)  # [1, H, W]
-        B = np.expand_dims(B, axis=0)  # [1, H, W]
+        # Pad images to 256x256 if necessary
+        A = pad_to_256(A)
+        # ✅ Inject square artifact to simulate OOD
+        # item_A = self.add_square_artifact(item_A, value=1.0, size=32)  # adjust value and size as needed
+        B = pad_to_256(B)
+
+        # A = np.expand_dims(A, axis=0)  # [1, H, W]
+        # B = np.expand_dims(B, axis=0)  # [1, H, W]
 
         return {
             "A": A,

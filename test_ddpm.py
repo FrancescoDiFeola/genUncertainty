@@ -102,7 +102,10 @@ if __name__ == '__main__':
             csv_path= "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/mr_ct_dataset_test.csv",
             output_size=256,
         )
-    
+
+    elif args.task == "T1T2_Oasis":
+        dataset = Mri2DSlicedataset(args)
+
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
     diffusion = networks.init_ddpm(args.in_ch, args.out_ch, args.diff_ckpt).to(DEVICE)
 
@@ -132,7 +135,7 @@ if __name__ == '__main__':
         writer_csv = writer_[2]
         writer_csv_2 = writer_[3]
 
-    elif args.analysis == "metrics_v1":
+    elif args.analysis == "metrics_no_uncertainty":
 
         csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}.csv")
         writer_csv = initialize_writers(csv_path, writer_type=args.analysis)[1]

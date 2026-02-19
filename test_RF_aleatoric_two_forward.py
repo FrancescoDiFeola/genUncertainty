@@ -94,6 +94,8 @@ if __name__ == '__main__':
     elif args.task == "CTPET":
         dataset = Mri2DSlicedataset(args)
 
+    elif args.task == "T1T2_Oasis":
+        dataset = Mri2DSlicedataset(args)
 
     elif args.task == "denoising":
         dataset = LDCTHDCTDataset(
@@ -133,8 +135,8 @@ if __name__ == '__main__':
 
     elif args.analysis == "both":
 
-        csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_image_uncertainty_k_30_w_o_IR_ablation.csv")
-        csv_path_2 = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_uncertainty_calibration_k_30_w_o_IR_ablation.csv")
+        csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_image_uncertainty_k_10_train.csv")
+        csv_path_2 = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_uncertainty_calibration_k_10_train.csv")
         writer_ = initialize_writers(csv_path, csv_path_2, writer_type=args.analysis)
         writer_csv = writer_[2]
         writer_csv_2 = writer_[3]
@@ -189,7 +191,7 @@ if __name__ == '__main__':
                     scheduler=scheduler,
                     csv_writer=writer_csv,
                     csv_writer_2=writer_csv_2,
-                    K=30,
+                    K=10,
                 )
 
     print(f"✅ Inference complete. Metrics saved to {csv_path}")

@@ -40,7 +40,7 @@ cd /mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion
 
 # python3 ./train_ddpm.py --num_workers 8 --experiment_name "ddpm" --task "T1T2_Oasis" --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase train --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
 # python3 ./train_ddpm_aleatoric.py --num_workers 8 --experiment_name "ddpm_aleatoric" --task "T1T2_Oasis" --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase train --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
-python3 ./train_ddpm_aleatoric_two_forward.py  --num_workers 8 --experiment_name "aleatoric_two_forward" --spatial_enc_channels 1 --task "T1T2_Oasis" --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase train --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
+# python3 ./train_ddpm_aleatoric_two_forward.py  --num_workers 8 --experiment_name "aleatoric_two_forward" --task "T1T2_Oasis" --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase train --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
 
 
 
@@ -105,7 +105,8 @@ python3 ./train_ddpm_aleatoric_two_forward.py  --num_workers 8 --experiment_name
 ############ LDM ###################
 
 # python3 ./train_LDM.py --num_workers 8 --experiment_name "LDM_T1T2" --task "T1T2_Oasis" --in_ch 6 --out_ch 3 --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase train --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
-# python3 ./train_LDM_aleatoric.py --num_workers 8 --experiment_name "LDM_aleatoric_T1T2" --task "T1T2_Oasis" --in_ch 6 --out_ch 3 --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase train --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
+python3 ./train_LDM_aleatoric.py --num_workers 8 --experiment_name "LDM_aleatoric_MRCT" --task "MRtoCT" --in_ch 6 --out_ch 3
+# --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase train --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
 # python3 ./train_LDM_aleatoric_two_forward.py --num_workers 8 --experiment_name "LDM_aleatoric_two_forward" --spatial_enc_channels 3 --task "T1T2_Oasis" --in_ch 6 --out_ch 3 --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase train --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
 
 ####################################

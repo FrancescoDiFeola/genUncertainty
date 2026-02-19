@@ -4,10 +4,10 @@ import csv
 # ------------------------------------------------------
 # Configuration
 # ------------------------------------------------------
-DATASET_ROOT = "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/Task1/pelvis/test"   # <-- change this
-OUTPUT_CSV = "mr_ct_dataset_test.csv"
+DATASET_ROOT = "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/Task2/pelvis/train"   # <-- change this
+OUTPUT_CSV = "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/Task2/cbct_ct_dataset_train.csv"
 
-MR_PREFIXES = ("mr_", "MR_")
+MR_PREFIXES = ("cbct_", "CBCT_")
 CT_PREFIXES = ("ct_", "CT_")
 
 # ------------------------------------------------------
@@ -29,7 +29,7 @@ for subject_id in sorted(os.listdir(DATASET_ROOT)):
 
         if fname.endswith(".npy"):
             if fname.startswith(MR_PREFIXES):
-                modality = "MR"
+                modality = "CBCT"
             elif fname.startswith(CT_PREFIXES):
                 modality = "CT"
             else:

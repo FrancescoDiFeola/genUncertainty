@@ -153,6 +153,18 @@ if __name__ == '__main__':
         )
         scaling_factor = 7.832608
 
+    elif args.task == "T1T2_Oasis":
+        dataset = Mri2DSlicedataset(args)
+        scaling_factor = 9.404202
+
+    elif args.task == "MRtoCT":
+
+        dataset = MRCTPaired(
+            csv_path= "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/mr_ct_dataset_train.csv",
+            output_size=256,
+        )
+        scaling_factor = 6.640712
+
     train_loader = DataLoader(dataset=dataset,
                               batch_size=args.batch_size,
                               shuffle=True,
@@ -307,7 +319,7 @@ if __name__ == '__main__':
 
         writer.add_scalar('train/epoch_loss', epoch_loss / len(train_loader), epoch)
 
-        if epoch % 20 == 0:
+        if (epoch % 20 == 0 or epoch % 50 == 0):
             # Save the model after each epoch.
             torch.save(diffusion.state_dict(), os.path.join(experiment_dir, f'diffusion-ep-{epoch + args.epoch_start}.pth'))
             torch.save(spatial_encoder.state_dict(), os.path.join(experiment_dir, f'spatial_encoder-ep-{epoch}.pth'))

@@ -20,6 +20,7 @@ from src.brlp.ldct_hdct_dataset import LDCTHDCTDataset
 from src.brlp.T1_T2_dataset import T1T2Dataset
 from src.brlp.CTPET_dataset import CTPETDataset
 from src.brlp.CS_dataset import CityscapesColorDataset
+from src.brlp.MR_to_CT import  MRCTPaired
 from src.brlp.Mri2DSlice_dataset import Mri2DSlicedataset
 from src.brlp.ND_dataset import PairedImageDataset
 from src.VAE.utils.checkpoints_utils import load_checkpoint
@@ -258,6 +259,18 @@ if __name__ == '__main__':
         )
         scaling_factor = 7.832608
 
+    elif args.task == "T1T2_Oasis":
+        dataset = Mri2DSlicedataset(args)
+        scaling_factor = 9.404202
+
+    elif args.task == "MRtoCT":
+
+        dataset = MRCTPaired(
+            csv_path= "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/mr_ct_dataset_train.csv",
+            output_size=256,
+        )
+        scaling_factor = 6.640712
+
     train_loader = DataLoader(dataset=dataset,
                               batch_size=args.batch_size,
                               shuffle=True,
@@ -331,7 +344,7 @@ if __name__ == '__main__':
         for step, batch in progress_bar:
             img_A = batch["A"].to(DEVICE)  # Low-dose CT
             img_B = batch["B"].to(DEVICE)  # High-dose CT
-
+            print(img_A.shape, img_B.shape)
             with torch.no_grad():
                 _, img_A_latent, _ = autoencoder(img_A)
                 _, img_B_latent, _ = autoencoder(img_B)
@@ -370,7 +383,6 @@ if __name__ == '__main__':
 
             # torch.cuda.empty_cache()
 
-            """
             if step % 150 == 0:
                 sample_and_plot_batch_ddim(
                     diffusion_model=diffusion,
@@ -385,7 +397,7 @@ if __name__ == '__main__':
                     tag="DDIM_Sampling",
 
                 )
-            """
+
 
         writer.add_scalar('train/epoch_loss', epoch_loss / len(train_loader), epoch)
 

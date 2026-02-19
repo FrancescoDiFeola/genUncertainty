@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from skimage.metrics import peak_signal_noise_ratio as compute_psnr, structural_similarity as compute_ssim
 import torch
 import os
-from src.inference.utils import sparsification_curve, random_sparsification, norm_percentile, collect_calibration_data, map_correlations_multi_thresholds
+from src.inference.utils import sparsification_curve, random_sparsification, norm_percentile, collect_calibration_data, map_correlations_multi_thresholds, map_correlations
 
 
 ####################### Latent Rectified Flow Matching self-refining #########################

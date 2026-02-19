@@ -22,6 +22,7 @@ from src.brlp.CTPET_dataset import CTPETDataset
 from src.brlp.CS_dataset import CityscapesColorDataset
 from src.brlp.Mri2DSlice_dataset import Mri2DSlicedataset
 from src.brlp.ND_dataset import PairedImageDataset
+from src.brlp.MR_to_CT import  MRCTPaired
 from src.VAE.utils.checkpoints_utils import load_checkpoint
 
 
@@ -392,7 +393,7 @@ if __name__ == '__main__':
     experiment_dir = os.path.join(f"{args.output_dir}/{args.task}", args.experiment_name)
     os.makedirs(experiment_dir, exist_ok=True)
 
-    args.VAE_ckpt = os.path.join(args.output_dir, args.task, "VAE")
+    args.VAE_ckpt = os.path.join(args.output_dir, "T1T2", "VAE")
     # -----------------------
     # ✅ Load dataset
     # -----------------------
@@ -442,6 +443,18 @@ if __name__ == '__main__':
             annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_FULLDOSE.csv',
         )
         scaling_factor = 7.832608
+
+    elif args.task == "T1T2_Oasis":
+        dataset = Mri2DSlicedataset(args)
+        scaling_factor = 9.404202
+
+    elif args.task == "MRtoCT":
+
+        dataset = MRCTPaired(
+            csv_path= "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/mr_ct_dataset_train.csv",
+            output_size=256,
+        )
+        scaling_factor = 6.640712
 
     train_loader = DataLoader(dataset=dataset,
                               batch_size=args.batch_size,

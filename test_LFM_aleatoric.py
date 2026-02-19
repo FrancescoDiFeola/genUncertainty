@@ -3,7 +3,7 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 from monai.utils import set_determinism
 from torchvision import transforms
-from generative.networks.schedulers import DDIMScheduler
+from monai.networks.schedulers import RFlowScheduler
 from src.brlp import networks
 from monai.networks.nets.autoencoderkl import AutoencoderKL
 from src.brlp.ldct_hdct_dataset import LDCTHDCTDataset
@@ -12,6 +12,7 @@ from src.brlp.CTPET_dataset import CTPETDataset
 from src.brlp.CS_dataset import CityscapesColorDataset
 from src.brlp.Mri2DSlice_dataset import Mri2DSlicedataset
 from src.brlp.ND_dataset import PairedImageDataset
+from src.brlp.MR_to_CT import  MRCTPaired
 from src.VAE.utils.checkpoints_utils import load_checkpoint
 from src.inference.inference_LFM import *
 from src.inference.utils import initialize_writers
@@ -98,6 +99,13 @@ if __name__ == '__main__':
         )
         scaling_factor = 7.832608
 
+    elif args.task == "MRtoCT":
+
+        dataset = MRCTPaired(
+            csv_path= "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/mr_ct_dataset_train.csv",
+            output_size=256,
+        )
+        scaling_factor = 6.640712
 
     loader = DataLoader(dataset,
                         batch_size=args.batch_size,
@@ -131,13 +139,16 @@ if __name__ == '__main__':
         diffusion = torch.nn.DataParallel(diffusion)
         autoencoder = torch.nn.DataParallel(autoencoder)
 
-    scheduler = DDIMScheduler(
+    scheduler = RFlowScheduler(
         num_train_timesteps=1000,
-        beta_start=0.0015,
-        beta_end=0.0205,
-        schedule="scaled_linear_beta",
-        clip_sample=False,
+        use_discrete_timesteps=False,  # impostato a False nel codice di MAISI
+        sample_method='uniform',  # impostato come in MAISI
+        use_timestep_transform=True,
+        base_img_size_numel=256*256,
+        spatial_dim=2
     )
+
+    scheduler.set_timesteps(num_inference_steps=30, device=DEVICE, input_img_size_numel=256*256)
 
     writer = SummaryWriter(comment=args.experiment_name)
 
