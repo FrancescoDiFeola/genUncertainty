@@ -71,6 +71,105 @@ class LDCTHDCTDataset():
 
         self.plot_verbose = False
 
+
+    # =========================================================
+    # Noise Level Mapping (NL0–NL3)
+    # =========================================================
+
+    def _get_noise_param(self):
+        if self.perturbation_type == "gaussian":
+            levels = [0.0, 0.10, 0.20, 0.30]
+            return levels[self.noise_level]
+
+        elif self.perturbation_type == "uniform":
+            levels = [0.0, 0.20, 0.40, 0.60]
+            return levels[self.noise_level]
+
+        elif self.perturbation_type == "impulse":
+            levels = [0.0, 0.15, 0.30, 0.45]
+            return levels[self.noise_level]
+
+        return 0.0
+
+    # =========================================================
+    # Noise Level Mapping (NL0–NL3)
+    # =========================================================
+
+    def _get_noise_param(self):
+        if self.perturbation_type == "gaussian":
+            levels = [0.0, 0.10, 0.20, 0.30]
+            return levels[self.noise_level]
+
+        elif self.perturbation_type == "uniform":
+            levels = [0.0, 0.20, 0.40, 0.60]
+            return levels[self.noise_level]
+
+        elif self.perturbation_type == "impulse":
+            levels = [0.0, 0.15, 0.30, 0.45]
+            return levels[self.noise_level]
+
+        return 0.0
+
+    # =========================================================
+    # Apply Controlled Noise
+    # =========================================================
+
+    def _apply_noise(self, img, index):
+        """
+        img: torch tensor (C, H, W) in [0,1]
+        """
+
+        if self.perturbation_type is None:
+            return img
+
+        param = self._get_noise_param()
+
+        if param == 0.0:
+            return img
+
+        # Create local generator for deterministic per-sample noise
+        if self.deterministic_noise:
+            g = torch.Generator(device=img.device)
+            g.manual_seed(self.base_seed + index)
+        else:
+            g = None
+
+        # -------------------------
+        # Gaussian
+        # -------------------------
+        if self.perturbation_type == "gaussian":
+            noise = torch.randn_like(img, generator=g) * param
+            img = img + noise
+
+        # -------------------------
+        # Uniform
+        # -------------------------
+        elif self.perturbation_type == "uniform":
+            noise = torch.rand_like(img, generator=g) * param
+            img = img + noise
+
+        # -------------------------
+        # Impulse
+        # -------------------------
+        elif self.perturbation_type == "impulse":
+            C, H, W = img.shape
+
+            # Bernoulli mask (1 = replace pixel)
+            mask = torch.bernoulli(
+                torch.full((1, H, W), param, device=img.device),
+                generator=g
+            )
+
+            # Random color image
+            random_img = torch.rand_like(img, generator=g)
+
+            img = mask * random_img + (1 - mask) * img
+
+        # Clamp to valid intensity range
+        img = torch.clamp(img, 0.0, 1.0)
+
+        return img
+
     def __getitem__(self, index):
         """Return a data point and its metadata information."""
 
