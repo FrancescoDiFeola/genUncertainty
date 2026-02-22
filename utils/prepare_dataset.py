@@ -44,7 +44,7 @@ for subject in tqdm(subjects):
     #    np.save(os.path.join(out_subject_dir, f"ct_{d:03d}.npy"), ct[:, :, d])
 
 
-"""
+
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -73,4 +73,3 @@ axes[1].axis("off")
 
 plt.tight_layout()
 plt.show()
-"""

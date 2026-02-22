@@ -132,6 +132,72 @@ def sparsification_curve(u, e, num_steps=50, max_frac=0.99):
 
     return fractions[:len(curve)], np.array(curve)
 
+def sparsification_curve_fast(u, e, num_steps=50, max_frac=0.99, normalize=True):
+
+    sorted_idx = np.argsort(-u)
+    e_sorted = e[sorted_idx]
+
+    N = len(e_sorted)
+
+    fractions = np.linspace(0, max_frac, num_steps)
+    k_vals = np.minimum(np.round(fractions * N).astype(int), N - 1)
+
+    cumsum = np.cumsum(e_sorted)
+    total_sum = cumsum[-1]
+
+    remaining_sum = np.where(
+        k_vals == 0,
+        total_sum,
+        total_sum - cumsum[k_vals - 1]
+    )
+
+    remaining_count = N - k_vals
+    curve = remaining_sum / remaining_count
+
+    if normalize:
+        curve /= (curve[0] + 1e-12)
+
+    return fractions, curve
+
+def random_sparsification_fast(e, fractions, trials=20, normalize=True):
+    """
+    Vectorized random sparsification curve.
+
+    e: flattened error (1D numpy array)
+    fractions: array of removal fractions (same as sparsification_curve)
+    trials: number of random permutations
+    """
+
+    N = len(e)
+    avg_curve = np.zeros(len(fractions), dtype=np.float64)
+
+    # Precompute k values once
+    k_vals = np.minimum(np.round(fractions * N).astype(int), N - 1)
+
+    for _ in range(trials):
+
+        perm = np.random.permutation(N)
+        e_perm = e[perm]
+
+        cumsum = np.cumsum(e_perm)
+        total_sum = cumsum[-1]
+
+        # Remaining sum using safe formulation
+        remaining_sum = np.where(
+            k_vals == 0,
+            total_sum,
+            total_sum - cumsum[k_vals - 1]
+        )
+
+        remaining_count = N - k_vals
+        avg_curve += remaining_sum / remaining_count
+
+    avg_curve /= trials
+
+    if normalize:
+        avg_curve /= (avg_curve[0] + 1e-12)
+
+    return avg_curve
 
 def random_sparsification(e, fractions, trials=10):
     N = len(e)

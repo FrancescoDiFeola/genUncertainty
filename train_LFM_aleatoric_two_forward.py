@@ -165,6 +165,10 @@ if __name__ == '__main__':
         )
         scaling_factor = 6.640712
 
+    elif args.task == "T1T2_Oasis":
+        dataset = Mri2DSlicedataset(args)
+        scaling_factor = 9.404202
+
     train_loader = DataLoader(dataset=dataset,
                               batch_size=args.batch_size,
                               shuffle=True,

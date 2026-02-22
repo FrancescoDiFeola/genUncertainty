@@ -14,6 +14,7 @@ from src.brlp import networks
 from src.VAE.utils.checkpoints_utils import load_checkpoint
 from src.inference.inference_LFM import *
 from src.inference.utils import initialize_writers
+from src.brlp.MR_to_CT import MRCTPaired
 
 # -----------------------
 # ✅ Set environment
@@ -107,6 +108,18 @@ if __name__ == '__main__':
         )
         scaling_factor = 7.832608
 
+    elif args.task == "T1T2_Oasis":
+        dataset = Mri2DSlicedataset(args)
+        scaling_factor = 9.404202
+
+    elif args.task == "MRtoCT":
+
+        dataset = MRCTPaired(
+            csv_path="/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/mr_ct_dataset_train.csv",
+            output_size=256,
+        )
+        scaling_factor = 6.640712
+
     loader = DataLoader(dataset,
                         batch_size=args.batch_size,
                         shuffle=False,
@@ -160,7 +173,7 @@ if __name__ == '__main__':
 
     elif args.analysis == "metrics":
 
-        csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_image_uncertainty_K_30_w_o_IR_ablation.csv")
+        csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_image_uncertainty_k_30_train.csv")
         writer_csv = initialize_writers(csv_path, writer_type=args.analysis)[1]
 
     for step, batch in enumerate(loader):

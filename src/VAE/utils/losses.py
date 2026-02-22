@@ -52,18 +52,18 @@ class VAE_Losses:
         }
 
         # Adversarial loss: Discourage trivial latent encodings by making z_ct and z_pet realistic
-        # logits_fake = discriminator(reconstruction.float())[-1]
-        # generator_loss = self.adv_loss(logits_fake, target_is_real=True, for_discriminator=False)
+        logits_fake = discriminator(reconstruction.float())[-1]
+        generator_loss = self.adv_loss(logits_fake, target_is_real=True, for_discriminator=False)
 
         # Total adversarial loss
-        # generator_loss_tot = (generator_loss) * 0.5
+        generator_loss_tot = (generator_loss) * 0.5
 
         # Final weighted loss for the encoder
         loss_g = (
             losses["recon"]+
             self.kl_weight * losses["kl"] +  # Ensure smooth latent representation
-            self.perceptual_weight * losses["perceptual"] # +  # Maintain high-level structure
-            # self.adv_weight * generator_loss_tot    # Adversarial regularization
+            self.perceptual_weight * losses["perceptual"] + # +  # Maintain high-level structure
+            self.adv_weight * generator_loss_tot    # Adversarial regularization
 
         )
 

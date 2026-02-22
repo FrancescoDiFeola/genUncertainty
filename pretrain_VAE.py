@@ -23,6 +23,9 @@ from src.VAE.utils.checkpoints_utils import save_checkpoint, load_checkpoint
 from src.VAE.data.dataset_MRtoCT import MRCTSingleImageDataset
 from src.VAE.data.dataset_T1T2 import T1T2Dataset
 from src.VAE.data.dataset_CTPET import CTPETDataset
+from src.VAE.data.dataset_CBCTtoCT import CBCTCTSingleImageDataset
+from torch import nn
+
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -276,6 +279,9 @@ def train_autoencoder(opt):
     elif opt.task == "T1T2_Oasis":
         dataset = CTPETDataset(opt)
 
+    elif opt.task == "CBCTtoCT":
+        dataset = CBCTCTSingleImageDataset(csv_path="/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/Task2/cbct_ct_dataset_train.csv")
+
     train_loader = DataLoader(dataset=dataset,
                               batch_size=opt.batchSize,
                               shuffle=True,
@@ -332,16 +338,14 @@ def train_autoencoder(opt):
 
 
     # **Initialize the Discriminator**
-    """
     discriminator = PatchDiscriminator(
         spatial_dims=2, num_layers_d=3, channels=64, in_channels=1, out_channels=1, norm="INSTANCE"
     ).to(device)
-    """
 
-    #if torch.cuda.device_count() > 1:
-    #    print(f"Using {torch.cuda.device_count()} GPUs!")
-    #    autoencoder = nn.DataParallel(autoencoder)
-    #    discriminator = nn.DataParallel(discriminator)
+    if torch.cuda.device_count() > 1:
+        print(f"Using {torch.cuda.device_count()} GPUs!")
+        autoencoder = nn.DataParallel(autoencoder)
+        discriminator = nn.DataParallel(discriminator)
 
     # Loss handler
     loss_handler = VAE_Losses(
@@ -352,9 +356,9 @@ def train_autoencoder(opt):
     # **Define Optimizers & Learning Rate Schedulers**
     optimizer_g = optim.Adam(filter(lambda p: p.requires_grad, autoencoder.parameters()), lr=opt.lr,
                              eps=1e-6 if opt.amp else 1e-8)
-    # optimizer_d = optim.Adam(discriminator.parameters(), lr=opt.lr, eps=1e-6 if opt.amp else 1e-8)
+    optimizer_d = optim.Adam(discriminator.parameters(), lr=opt.lr, eps=1e-6 if opt.amp else 1e-8)
     scheduler_g = lr_scheduler.LambdaLR(optimizer_g, lr_lambda=lambda epoch: 0.1 if epoch < 10 else 1.0)
-    # scheduler_d = lr_scheduler.LambdaLR(optimizer_d, lr_lambda=lambda epoch: 0.1 if epoch < 10 else 1.0)
+    scheduler_d = lr_scheduler.LambdaLR(optimizer_d, lr_lambda=lambda epoch: 0.1 if epoch < 10 else 1.0)
 
     # **Setup AMP GradScaler**
     scaler_g = GradScaler(enabled=opt.amp)
@@ -365,12 +369,12 @@ def train_autoencoder(opt):
     #avgloss = utils.AverageLoss()
     #total_counter = 0  # print(f"TensorBoard logging directory: {writer.log_dir}")
     #checkpoint_dir = "/mimer/NOBACKUP/groups/naiss2023-6-336/lcarusone/TESI_MAGISTRALE/src/VAE/checkpoints"
-    checkpoint_dir = "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/MRtoCT/VAE"
-
+    checkpoint_dir = "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/MRtoCT/VAE_"
+    # checkpoint_dir = "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/CBCTtoCT/VAE"
 
     # **Load Checkpoints from checkpoint.py**
     start_epoch = load_checkpoint(autoencoder, optimizer_g, checkpoint_dir, model_name="autoencoder")  # opt
-    # _ = load_checkpoint(discriminator, optimizer_d, checkpoint_dir, model_name="discriminator")
+    _ = load_checkpoint(discriminator, optimizer_d, checkpoint_dir, model_name="discriminator")
     print(f"Resuming training from epoch {start_epoch}")
 
     loss_history = {
@@ -378,7 +382,7 @@ def train_autoencoder(opt):
         "recon": [],
         "kl": [],
         "perceptual": [],
-        # "adv": []
+        "adv": []
     }
 
     # apply_gradient_checkpointing(autoencoder.encoder)
@@ -387,7 +391,7 @@ def train_autoencoder(opt):
 
     for epoch in range(start_epoch, opt.n_epochs):
         autoencoder.train()
-        # discriminator.train()
+        discriminator.train()
         total_loss = {"recon": 0, "kl": 0, "perceptual": 0, "adv": 0}
 
         epoch_iter = tqdm(train_loader, desc=f"Epoch {epoch + 1}/{opt.n_epochs}", leave=True)
@@ -404,7 +408,7 @@ def train_autoencoder(opt):
             #print(f"shape of baseline image:{img_bl.shape}, shape of followup image: {img_fu.shape}")
 
             optimizer_g.zero_grad()
-            # optimizer_d.zero_grad()
+            optimizer_d.zero_grad()
 
             with autocast(enabled=True, dtype=torch.bfloat16):
                 # **Encode CT & PET images into shared latent space**
@@ -413,28 +417,28 @@ def train_autoencoder(opt):
                 #print(f"Min valore input: {img_fu.min().item():.4f}, Max valore input: {img_fu.max().item():.4f}")
                 #print(f"Min valore output: {recon_fu.min().item():.4f}, Max valore output: {recon_fu.max().item():.4f}")
 
-                # logits_reconstruction = discriminator(reconstruction.detach())[-1]  # Detach to avoid generator gradients
-                # logits_real = discriminator(image.detach())[-1]
+                logits_reconstruction = discriminator(reconstruction.detach())[-1]  # Detach to avoid generator gradients
+                logits_real = discriminator(image.detach())[-1]
 
-                # loss_d = (
-                #        loss_handler.adv_loss(logits_reconstruction, target_is_real=False, for_discriminator=True) +
-                #        loss_handler.adv_loss(logits_real, target_is_real=True, for_discriminator=True)
-                # )
+                loss_d = (
+                        loss_handler.adv_loss(logits_reconstruction, target_is_real=False, for_discriminator=True) +
+                        loss_handler.adv_loss(logits_real, target_is_real=True, for_discriminator=True)
+                )
                 #print(f"loss_d_fu:{loss_d_fu}")
 
                 # **Backpropagation for Discriminator**
-                """
+
                 scaler_d.scale(loss_d).backward()
                 # **Gradient Accumulation for Discriminator**
                 if (i + 1) % opt.gradient_accumulation_steps == 0:
                     scaler_d.step(optimizer_d)
                     scaler_d.update()
                     optimizer_d.zero_grad()  # Reset gradients
-                """
+
 
                 # **Compute Generator Losses**
                 losses, loss_g = loss_handler.compute_losses(
-                    reconstruction, image, mu, log_var, 0
+                    reconstruction, image, mu, log_var, discriminator
                 )
 
                 #print("DEBUG: Losses computed successfully!")  # Debugging line
@@ -457,14 +461,14 @@ def train_autoencoder(opt):
             for key in total_loss:
                 if key in losses:
                     total_loss[key] += losses[key].item()
-                # if key == "adv":
-                #     total_loss["adv"] += loss_d.item()
+                if key == "adv":
+                    total_loss["adv"] += loss_d.item()
 
 
         # writer.flush()
         # Step the learning rate scheduler after each epoch
         scheduler_g.step()
-        # scheduler_d.step()
+        scheduler_d.step()
 
         avg_loss = {k: v / len(train_loader) for k, v in total_loss.items()}
 
@@ -472,7 +476,7 @@ def train_autoencoder(opt):
         loss_history["recon"].append(avg_loss['recon'])
         loss_history["kl"].append(avg_loss['kl'])
         loss_history["perceptual"].append(avg_loss['perceptual'])
-        # loss_history["adv"].append(avg_loss['adv'])
+        loss_history["adv"].append(avg_loss['adv'])
 
 
 
@@ -496,7 +500,7 @@ def train_autoencoder(opt):
         # **Save Model Checkpoint**
         if (epoch) % 50 == 0:
             save_checkpoint(autoencoder, optimizer_g, epoch, checkpoint_dir, model_name="autoencoder")
-            # save_checkpoint(discriminator, optimizer_d, epoch, checkpoint_dir, model_name="discriminator")
+            save_checkpoint(discriminator, optimizer_d, epoch, checkpoint_dir, model_name="discriminator")
 
     print("[INFO] Training Complete! Model saved to pretrained/checkpoints")
 

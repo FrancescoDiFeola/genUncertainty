@@ -104,6 +104,7 @@ if __name__ == '__main__':
     elif args.task == "T1T2_Oasis":
         dataset = Mri2DSlicedataset(args)
 
+
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
     diffusion = networks.init_ddpm(args.in_ch, args.out_ch, args.diff_ckpt).to(DEVICE)
 
@@ -125,7 +126,7 @@ if __name__ == '__main__':
 
     if args.analysis == "sparsification":
 
-        csv_path = os.path.join(experiment_dir, f"sparsification_epoch_{args.epoch}.csv")
+        csv_path = os.path.join(experiment_dir, f"sparsification_S_8_epoch_{args.epoch}.csv")
         writer_csv = initialize_writers(csv_path, writer_type=args.analysis)[1]
 
     elif args.analysis == "metrics":

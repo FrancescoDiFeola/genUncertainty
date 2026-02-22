@@ -57,20 +57,22 @@ cd /mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion
 # python3 ./test_ddpm.py  --num_workers 8 --experiment_name "ddpm" --epoch "280" --task "T1T2_Oasis" --analysis "metrics_no_uncertainty" --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase test --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
 # python3 ./test_ddpm_aleatoric_two_forward.py  --num_workers 8 --experiment_name "aleatoric_two_forward" --epoch "40" --task "T1T2_Oasis" --analysis "both" --spatial_enc_channels 1 --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase test --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
 
-# python3 ./test_RF.py --num_workers 8 --experiment_name "RF_MRtoCT" --epoch "300" --task "MRtoCT" --analysis "metrics_no_uncertainty"
+# python3 ./test_RF.py --num_workers 8 --experiment_name "RF_MRtoCT" --epoch "100" --task "MRtoCT" --analysis "metrics_no_uncertainty"
 # --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase test --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
-# python3 ./test_RF_aleatoric_two_forward.py --num_workers 8 --experiment_name "RF_aleatoric_two_forward_MRtoCT" --task "MRtoCT" --spatial_enc_channels 1 --epoch "250" --analysis "both"
+# python3 ./test_RF_aleatoric_two_forward.py --num_workers 8 --experiment_name "RF_aleatoric_two_forward_MRtoCT" --task "MRtoCT" --spatial_enc_channels 1 --epoch "300" --analysis "both"
 # --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase train --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
 
-# python3 ./test_LDM.py  --num_workers 8 --experiment_name "LDM_MRCT" --task "MRtoCT" --epoch "200" --in_ch 6 --out_ch 3 --analysis "metrics_no_uncertainty"
-# python3 ./test_LDM_aleatoric_two_forward.py  --num_workers 8 --experiment_name "LDM_aleatoric_two_forward" --task "MRtoCT" --analysis "metrics" --epoch "200" --spatial_enc_channels 3 --in_ch 6 --out_ch 3
+# python3 ./test_LDM.py  --num_workers 8 --experiment_name "LDM_MRCT" --task "MRtoCT" --epoch "300" --in_ch 6 --out_ch 3 --analysis "metrics_no_uncertainty"
+# python3 ./test_LDM_aleatoric_two_forward.py  --num_workers 8 --experiment_name "LDM_aleatoric_two_forward" --task "MRtoCT" --analysis "metrics" --epoch "300" --spatial_enc_channels 3 --in_ch 6 --out_ch 3
 # --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase test --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
 
-# python3 ./test_LFM.py  --num_workers 8 --experiment_name "LFM_MRtoCT" --task "MRtoCT" --epoch "200" --in_ch 6 --out_ch 3 --analysis "metrics_no_uncertainty"
-python3 ./test_LFM_two_forward.py  --num_workers 8 --experiment_name "LFM_aleatoric_two_forward_MRCT" --task "MRtoCT" --epoch "200" --in_ch 6 --out_ch 3 --spatial_enc_channels 3 --analysis "metrics"
+
+# python3 ./test_LFM.py  --num_workers 8 --experiment_name "LFM_MRtoCT" --task "MRtoCT" --epoch "300" --in_ch 6 --out_ch 3 --analysis "metrics_no_uncertainty"
+python3 ./test_LFM_two_forward.py  --num_workers 8 --experiment_name "LFM_aleatoric_two_forward_MRCT" --task "MRtoCT" --epoch "300" --in_ch 6 --out_ch 3 --spatial_enc_channels 3 --analysis "metrics"
 # --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase test --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
 
 ###########################################################################################################################################################################
+
 
 ###################################################### SPARSIFICATION ANALYSIS ###########################################################################################
 

@@ -14,6 +14,7 @@ from src.brlp import networks
 from src.VAE.utils.checkpoints_utils import load_checkpoint
 from src.inference.inference_LDM import *
 from src.inference.utils import initialize_writers
+from src.brlp.MR_to_CT import MRCTPaired
 
 # -----------------------
 # ✅ Set environment
@@ -271,7 +272,6 @@ if __name__ == '__main__':
     os.makedirs(experiment_dir, exist_ok=True)
     print(f"Checkpoint directory: {experiment_dir}")
 
-
     args.diff_ckpt = os.path.join(experiment_dir, f"diffusion-ep-{args.epoch}.pth")
     args.VAE_ckpt = os.path.join(args.output_dir, args.task, "VAE")
 
@@ -323,6 +323,18 @@ if __name__ == '__main__':
         )
         scaling_factor = 7.832608
 
+    elif args.task == "T1T2_Oasis":
+        dataset = Mri2DSlicedataset(args)
+        scaling_factor = 9.404202
+
+    elif args.task == "MRtoCT":
+
+        dataset = MRCTPaired(
+            csv_path= "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/mr_ct_dataset_test.csv",
+            output_size=256,
+        )
+        scaling_factor = 6.640712
+
     loader = DataLoader(dataset,
                         batch_size=args.batch_size,
                         shuffle=False,
@@ -367,7 +379,7 @@ if __name__ == '__main__':
 
     if args.analysis == "sparsification":
 
-        csv_path = os.path.join(experiment_dir, f"sparsification_epoch_{args.epoch}.csv")
+        csv_path = os.path.join(experiment_dir, f"sparsification_S_8_epoch_{args.epoch}.csv")
         writer_csv = initialize_writers(csv_path, writer_type=args.analysis)[1]
 
     elif args.analysis == "metrics":
@@ -375,9 +387,9 @@ if __name__ == '__main__':
         csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_image_uncertainty_train.csv")
         writer_csv = initialize_writers(csv_path, writer_type=args.analysis)
 
-    elif args.analysis == "metrics_v1":
+    elif args.analysis == "metrics_no_uncertainty":
 
-        csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}.csv")
+        csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_test.csv")
         writer_csv = initialize_writers(csv_path, writer_type=args.analysis)[1]
 
 

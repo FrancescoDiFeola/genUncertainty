@@ -19,6 +19,7 @@ from src.brlp.Mri2DSlice_dataset import Mri2DSlicedataset
 from src.brlp.ND_dataset import PairedImageDataset
 from src.brlp.ldct_hdct_dataset import LDCTHDCTDataset
 from src.brlp.MR_to_CT import  MRCTPaired
+from src.brlp.CBCTtoCT_dataset import CBCTCTPaired
 import numpy as np
 # ----------------------------------------------
 # ✅ Set environment
@@ -397,6 +398,13 @@ if __name__ == '__main__':
 
     elif args.task == "T1T2_Oasis":
         dataset = Mri2DSlicedataset(args)
+
+    elif args.task == "CBCTtoCT":
+
+        dataset = CBCTCTPaired(
+            csv_path= "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/Task2/cbct_ct_dataset_train.csv",
+            output_size=256,
+        )
 
     train_loader = DataLoader(dataset=dataset,
                               batch_size=args.batch_size,

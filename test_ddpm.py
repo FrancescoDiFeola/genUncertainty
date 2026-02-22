@@ -13,7 +13,7 @@ from src.brlp.MR_to_CT import MRCTPaired
 from src.brlp import networks
 from src.inference.inference_ddpm import *
 from src.inference.utils import initialize_writers
-
+from src.brlp.CBCTtoCT_dataset import CBCTCTPaired
 
 # -----------------------
 # ✅ Set environment
@@ -106,6 +106,13 @@ if __name__ == '__main__':
     elif args.task == "T1T2_Oasis":
         dataset = Mri2DSlicedataset(args)
 
+    elif args.task == "CBCTtoCT":
+
+        dataset = CBCTCTPaired(
+            csv_path= "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/Task2/cbct_ct_dataset_test.csv",
+            output_size=256,
+        )
+
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
     diffusion = networks.init_ddpm(args.in_ch, args.out_ch, args.diff_ckpt).to(DEVICE)
 
@@ -124,7 +131,7 @@ if __name__ == '__main__':
 
     if args.analysis == "sparsification":
 
-        csv_path = os.path.join(experiment_dir, f"sparsification_epoch_{args.epoch}.csv")
+        csv_path = os.path.join(experiment_dir, f"sparsification_S_8_epoch_{args.epoch}.csv")
         writer_csv = initialize_writers(csv_path, writer_type=args.analysis)[1]
 
     elif args.analysis == "both":

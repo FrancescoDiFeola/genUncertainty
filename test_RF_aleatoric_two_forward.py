@@ -10,6 +10,7 @@ from src.brlp.Mri2DSlice_dataset import Mri2DSlicedataset
 from src.brlp.ND_dataset import PairedImageDataset
 from src.brlp.CS_dataset import CityscapesColorDataset
 from src.brlp import networks
+from src.brlp.MR_to_CT import MRCTPaired
 from src.inference.inference_RF import *
 from src.inference.utils import initialize_writers
 
@@ -105,6 +106,13 @@ if __name__ == '__main__':
             # annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_FULLDOSE.csv',
         )
 
+    elif args.task == "MRtoCT":
+
+        dataset = MRCTPaired(
+            csv_path= "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/mr_ct_dataset_test.csv",
+            output_size=256,
+        )
+
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
 
     # diffusion = networks.init_ddpm_uncertainty(args.diff_ckpt, use_cross_attention=True).to(DEVICE)
@@ -130,13 +138,13 @@ if __name__ == '__main__':
 
     if args.analysis == "sparsification":
 
-        csv_path = os.path.join(experiment_dir, f"sparsification_K_30_epoch_{args.epoch}.csv")
+        csv_path = os.path.join(experiment_dir, f"sparsification_K_30_fast_epoch_{args.epoch}.csv")
         writer_csv = initialize_writers(csv_path, writer_type=args.analysis)[1]
 
     elif args.analysis == "both":
 
-        csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_image_uncertainty_k_10_train.csv")
-        csv_path_2 = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_uncertainty_calibration_k_10_train.csv")
+        csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_image_uncertainty_k_30_delta.csv")
+        csv_path_2 = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_uncertainty_calibration_k_30_delta.csv")
         writer_ = initialize_writers(csv_path, csv_path_2, writer_type=args.analysis)
         writer_csv = writer_[2]
         writer_csv_2 = writer_[3]
@@ -191,7 +199,7 @@ if __name__ == '__main__':
                     scheduler=scheduler,
                     csv_writer=writer_csv,
                     csv_writer_2=writer_csv_2,
-                    K=10,
+                    K=30,
                 )
 
     print(f"✅ Inference complete. Metrics saved to {csv_path}")

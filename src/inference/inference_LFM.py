@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from skimage.metrics import peak_signal_noise_ratio as compute_psnr, structural_similarity as compute_ssim
 import torch
 import os
-from src.inference.utils import sparsification_curve, random_sparsification, norm_percentile, collect_calibration_data, map_correlations_multi_thresholds, map_correlations
+from src.inference.utils import sparsification_curve_fast, random_sparsification_fast, sparsification_curve, random_sparsification, norm_percentile, collect_calibration_data, map_correlations_multi_thresholds, map_correlations
 
 
 ####################### Latent Rectified Flow Matching self-refining #########################
@@ -949,7 +949,7 @@ def run_inference_LFM_vanilla_and_log_MC_sampling_sparsification(
     # --------------------------------------------------
     # Monte Carlo sampling parameters
     # --------------------------------------------------
-    S = 10  # number of sampled trajectories (8–16 is standard)
+    S = 8  # number of sampled trajectories (8–16 is standard)
 
     samples = []
 
@@ -980,7 +980,8 @@ def run_inference_LFM_vanilla_and_log_MC_sampling_sparsification(
     # --------------------------------------------------
     # Predictive mean and sampling variance
     # --------------------------------------------------
-    pred_denoised = samples.mean(dim=0)
+    # pred_denoised = samples.mean(dim=0)
+    pred_denoised = samples[0]
     mc_uncertainty_map = samples.var(dim=0, unbiased=False)
 
 
@@ -997,9 +998,9 @@ def run_inference_LFM_vanilla_and_log_MC_sampling_sparsification(
     u = unc_raw.flatten()
     e = err_raw.flatten()
 
-    fractions, curve = sparsification_curve(u, e, max_frac=0.95)
-    rand_curve = random_sparsification(e, fractions)
-    _, curve_oracle = sparsification_curve(e, e, max_frac=0.95)
+    fractions, curve = sparsification_curve_fast(u, e, max_frac=0.95)
+    rand_curve = random_sparsification_fast(e, fractions)
+    _, curve_oracle = sparsification_curve_fast(e, e, max_frac=0.95)
 
     for f, c, r, o in zip(fractions, curve, rand_curve, curve_oracle):
         csv_writer.writerow({

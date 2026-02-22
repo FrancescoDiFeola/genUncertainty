@@ -3,71 +3,127 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 
-# --------------------------------------------
-# Helper: Compute AUSE and AURG
-# --------------------------------------------
-def compute_ause(fractions, curve):
+# ======================================================
+# CONFIGURATION
+# ======================================================
+
+ROOT = "/Users/francescodifeola/Desktop/omega/uncertainty/results/denoising/sparsification"
+COMMON_MAX_FRACTION = 0.9      # choose 0.8 or 0.9 consistently
+SAVE_PLOTS = True
+
+# ======================================================
+# NUMERICAL INTEGRATION (SAFE)
+# ======================================================
+
+def integrate_curve(fractions, curve):
+    order = np.argsort(fractions)
+    fractions = fractions[order]
+    curve = curve[order]
+
+    # Remove duplicates
+    fractions, unique_idx = np.unique(fractions, return_index=True)
+    curve = curve[unique_idx]
+
     return np.trapz(curve, fractions)
 
-def compute_aurg(fractions, curve, rand_curve):
-    gap = rand_curve - curve
-    return np.trapz(gap, fractions)
+# ======================================================
+# CORRECT METRICS (FORMAL DEFINITIONS)
+# ======================================================
 
-# --------------------------------------------
-# Helper: Load and average sparsification CSV
-# --------------------------------------------
-def load_and_average(csv_path):
+def compute_ause(fractions, model_curve, oracle_curve):
+    """
+    AUSE = ∫ (model - oracle) / MAE(S) dα
+    Lower is better. Oracle AUSE ≈ 0.
+    """
+    mae_S = model_curve[0]
+    print(mae_S)
+    spars_error = (model_curve - oracle_curve) / (mae_S + 1e-12)
+    return integrate_curve(fractions, spars_error)
+
+def compute_aurg(fractions, model_curve, random_curve):
+    """
+    AURG = ∫ (random - model) / MAE(S) dα
+    Higher is better. Random AURG ≈ 0.
+    """
+    mae_S = model_curve[0]
+    random_gap = (random_curve - model_curve) / (mae_S + 1e-12)
+    return integrate_curve(fractions, random_gap)
+
+# ======================================================
+# LOAD CURVES (AVERAGED FOR PLOT)
+# ======================================================
+
+def load_average_curve(csv_path):
     df = pd.read_csv(csv_path)
+    df = df[df["Fraction"] <= COMMON_MAX_FRACTION]
 
-    # Ensure equal length (truncate if needed)
-    df = df.iloc[:360201+1]
+    grouped = (
+        df.groupby("Fraction")
+        .mean(numeric_only=True)
+        .reset_index()
+        .sort_values("Fraction")
+    )
 
-    grouped = df.groupby("Fraction").mean().reset_index()
+    return (
+        grouped["Fraction"].values,
+        grouped["Error"].values,
+        grouped["RandomError"].values,
+        grouped["OracleError"].values,
+    )
 
-    fractions = grouped["Fraction"].values
-    error = grouped["Error"].values
-    random_error = grouped["RandomError"].values
-    oracle_error = grouped["OracleError"].values
+# ======================================================
+# PER-SAMPLE METRIC COMPUTATION
+# ======================================================
 
-    return fractions, error, random_error, oracle_error
+def compute_metrics_per_sample(csv_path):
 
+    df = pd.read_csv(csv_path)
+    df = df[df["Fraction"] <= COMMON_MAX_FRACTION]
 
-# --------------------------------------------
-# Plot + Compute metrics
-# --------------------------------------------
-def analyze_backbone(backbone_name, ours_csv, mc_csv, save_plot=True):
+    ause_list = []
+    aurg_list = []
 
-    f_o, err_o, rand_o, oracle_o = load_and_average(ours_csv)
-    f_mc, err_mc, rand_mc, oracle_mc = load_and_average(mc_csv)
+    for sample_id, sample_df in df.groupby("Sample"):
 
-    # Use oracle/random from ours
-    oracle = oracle_o
-    random = rand_o
+        sample_df = sample_df.sort_values("Fraction")
 
-    # ----------------------------------------
-    # Compute metrics
-    # ----------------------------------------
-    ause_ours = compute_ause(f_o, err_o)
-    ause_mc = compute_ause(f_mc, err_mc)
-    ause_random = compute_ause(f_o, random)
-    ause_oracle = compute_ause(f_o, oracle)
+        fractions = sample_df["Fraction"].values
+        error = sample_df["Error"].values
+        random_error = sample_df["RandomError"].values
+        oracle_error = sample_df["OracleError"].values
 
-    aurg_ours = compute_aurg(f_o, err_o, random)
-    aurg_mc = compute_aurg(f_mc, err_mc, random)
+        ause = compute_ause(fractions, error, oracle_error)
+        aurg = compute_aurg(fractions, error, random_error)
 
-    # Oracle-normalized AUSE
-    norm_ause_ours = (ause_ours - ause_oracle) / (ause_random - ause_oracle + 1e-12)
-    norm_ause_mc = (ause_mc - ause_oracle) / (ause_random - ause_oracle + 1e-12)
+        ause_list.append(ause)
+        aurg_list.append(aurg)
 
-    # ----------------------------------------
-    # Plot
-    # ----------------------------------------
+    ause_array = np.array(ause_list)
+    aurg_array = np.array(aurg_list)
+
+    return {
+        "AUSE_mean": ause_array.mean(),
+        "AUSE_std": ause_array.std(ddof=1),
+        "AURG_mean": aurg_array.mean(),
+        "AURG_std": aurg_array.std(ddof=1),
+        "num_samples": len(ause_array)
+    }
+
+# ======================================================
+# PLOT SPARSIFICATION
+# ======================================================
+
+def plot_sparsification(backbone_name, ours_csv, mc_csv):
+
+    f_o, err_o, rand_o, oracle_o = load_average_curve(ours_csv)
+    f_mc, err_mc, _, _ = load_average_curve(mc_csv)
+
     plt.figure(figsize=(6,5))
 
     plt.plot(f_o, err_o, linewidth=3, label="REFINE (Ours)")
-    plt.plot(f_mc, err_mc, linewidth=2, label="MC-sampling")
-    plt.plot(f_o, random, linestyle="--", linewidth=2, label="Random")
-    plt.plot(f_o, oracle, linestyle=":", linewidth=2, label="Oracle")
+    plt.plot(f_mc, err_mc, linewidth=2, linestyle="--", label="MC-sampling")
+    plt.plot(f_o, rand_o, linestyle="--", linewidth=2, label="Random")
+    #  plt.plot(f_o, oracle_o, linestyle=":", linewidth=2, label="Oracle")
 
     plt.xlabel("Fraction of removed pixels")
     plt.ylabel("Remaining normalized L1 error")
@@ -76,170 +132,55 @@ def analyze_backbone(backbone_name, ours_csv, mc_csv, save_plot=True):
     plt.grid(alpha=0.3)
     plt.tight_layout()
 
-    if save_plot:
-        plt.savefig(f"{root}/{backbone_name}_sparsification.png", dpi=300)
+    if SAVE_PLOTS:
+        plt.savefig(f"{ROOT}/{backbone_name}_sparsification.png", dpi=300)
     else:
         plt.show()
 
     plt.close()
 
-    # ----------------------------------------
-    # Return metrics
-    # ----------------------------------------
-    return {
-        "Backbone": backbone_name,
-        "AUSE_Ours": ause_ours,
-        "AUSE_MC": ause_mc,
-        "AUSE_Random": ause_random,
-        "AUSE_Oracle": ause_oracle,
-        "AURG_Ours": aurg_ours,
-        "AURG_MC": aurg_mc,
-        "NormAUSE_Ours": norm_ause_ours,
-        "NormAUSE_MC": norm_ause_mc,
-    }
-
-
-# --------------------------------------------
-# Run analysis for all models
-# --------------------------------------------
-root = "/Users/francescodifeola/Desktop/omega/uncertainty/results/denoising/sparsification"
+# ======================================================
+# RUN ANALYSIS
+# ======================================================
 
 models = {
     "DDPM": (
-        f"{root}/DDPM_self_refining_sparsification_epoch_300.csv",
-        f"{root}/DDPM_MC_sampling_sparsification_epoch_300.csv"
+        f"{ROOT}/DDPM_self_refining_sparsification_epoch_300.csv",
+        f"{ROOT}/DDPM_MC_sampling_sparsification_epoch_300.csv"
     ),
     "LDM": (
-        f"{root}/LDM_self_refining_sparsification_epoch_50.csv",
-        f"{root}/LDM_MC_sampling_sparsification_epoch_50.csv"
+        f"{ROOT}/LDM_self_refining_sparsification_epoch_50.csv",
+        f"{ROOT}/LDM_MC_sampling_sparsification_epoch_50.csv"
     ),
     "LFM": (
-        f"{root}/LFM_self_refining_sparsification_K_30_epoch_250.csv",
-        f"{root}/LFM_MC_sampling_sparsification_epoch_250.csv"
+        f"{ROOT}/LFM_self_refining_sparsification_K_30_epoch_250.csv",
+        f"{ROOT}/LFM_MC_sampling_sparsification_epoch_250.csv"
     ),
     "RF": (
-        f"{root}/RF_self_refining_sparsification_K_30_epoch_50.csv",
-        f"{root}/RF_MC_sampling_sparsification_epoch_50.csv"
+        f"{ROOT}/RF_self_refining_sparsification_K_30_epoch_50.csv",
+        f"{ROOT}/RF_MC_sampling_sparsification_epoch_50.csv"
     ),
-}
-
-results = []
-
-for name, (ours, mc) in models.items():
-    metrics = analyze_backbone(name, ours, mc)
-    results.append(metrics)
-
-# Save summary CSV
-results_df = pd.DataFrame(results)
-results_df.to_csv(f"{root}/sparsification_summary_metrics.csv", index=False)
-
-print(results_df)
-
-
-##################
-
-import pandas as pd
-import numpy as np
-import os
-
-# --------------------------------------------------
-# Config
-# --------------------------------------------------
-MAX_ROW = 360201        # cut dataset consistently
-NORMALIZE_TO_ORACLE = False   # optional normalization
-
-# --------------------------------------------------
-# Metric functions
-# --------------------------------------------------
-
-def compute_ause(fractions, curve):
-    """Area Under Sparsification Error (lower is better)."""
-    return np.trapz(curve, fractions)
-
-
-def compute_aurg(fractions, curve, random_curve):
-    """Area Under Random Gap (higher is better)."""
-    gap = random_curve - curve
-    return np.trapz(gap, fractions)
-
-
-# --------------------------------------------------
-# Per-sample metric computation
-# --------------------------------------------------
-
-def compute_metrics_per_sample(csv_path):
-    df = pd.read_csv(csv_path)
-
-    # Cut rows consistently
-    df = df.iloc[:MAX_ROW+1]
-
-    ause_list = []
-    aurg_list = []
-
-    for sample_id, sample_df in df.groupby("Sample"):
-
-        fractions = sample_df["Fraction"].values
-        error = sample_df["Error"].values
-        random_error = sample_df["RandomError"].values
-        oracle_error = sample_df["OracleError"].values
-
-        ause = compute_ause(fractions, error)
-        aurg = compute_aurg(fractions, error, random_error)
-
-        # Optional normalization to oracle
-        if NORMALIZE_TO_ORACLE:
-            ause_oracle = compute_ause(fractions, oracle_error)
-            ause_random = compute_ause(fractions, random_error)
-
-            # Normalize between oracle and random
-            ause = (ause - ause_oracle) / (ause_random - ause_oracle + 1e-8)
-
-        ause_list.append(ause)
-        aurg_list.append(aurg)
-
-    ause_array = np.array(ause_list)
-    aurg_array = np.array(aurg_list)
-
-    results = {
-        "AUSE_mean": ause_array.mean(),
-        "AUSE_std": ause_array.std(),
-        "AURG_mean": aurg_array.mean(),
-        "AURG_std": aurg_array.std(),
-        "num_samples": len(ause_array)
-    }
-
-    return results
-
-
-# --------------------------------------------------
-# Evaluate multiple models
-# --------------------------------------------------
-
-root = "/Users/francescodifeola/Desktop/omega/uncertainty/results/denoising/sparsification"
-
-models = {
-    "DDPM_Ours": f"{root}/DDPM_self_refining_sparsification_epoch_300.csv",
-    "DDPM_MC": f"{root}/DDPM_MC_sampling_sparsification_epoch_300.csv",
-    "LDM_Ours": f"{root}/LDM_self_refining_sparsification_epoch_50.csv",
-    "LDM_MC": f"{root}/LDM_MC_sampling_sparsification_epoch_50.csv",
-    "LFM_Ours": f"{root}/LFM_self_refining_sparsification_K_30_epoch_250.csv",
-    "LFM_MC": f"{root}/LFM_MC_sampling_sparsification_epoch_250.csv",
-    "RF_Ours": f"{root}/RF_self_refining_sparsification_K_30_epoch_50.csv",
-    "RF_MC": f"{root}/RF_MC_sampling_sparsification_epoch_50.csv",
 }
 
 all_results = []
 
-for name, path in models.items():
-    print(f"Processing {name}...")
-    metrics = compute_metrics_per_sample(path)
-    metrics["Model"] = name
-    all_results.append(metrics)
+for name, (ours_path, mc_path) in models.items():
+
+    print(f"\nProcessing {name}...")
+
+    metrics_ours = compute_metrics_per_sample(ours_path)
+    metrics_mc = compute_metrics_per_sample(mc_path)
+
+    metrics_ours["Model"] = f"{name}_Ours"
+    metrics_mc["Model"] = f"{name}_MC"
+
+    all_results.append(metrics_ours)
+    all_results.append(metrics_mc)
+
+    plot_sparsification(name, ours_path, mc_path)
 
 results_df = pd.DataFrame(all_results)
-
-# Save results
-results_df.to_csv(f"{root}/sparsification_metrics_summary.csv", index=False)
+results_df.to_csv(f"{ROOT}/sparsification_metrics_summary.csv", index=False)
 
 print("\nFinal Results:")
 print(results_df)

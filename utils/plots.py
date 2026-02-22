@@ -182,8 +182,8 @@ import numpy as np
 # CONFIG
 # ============================================================
 
-ROOT_DIR = "/Users/francescodifeola/Desktop/omega/uncertainty/results/CTPET/LFM/"   # <-- change this
-OUTPUT_CSV = "/Users/francescodifeola/Desktop/omega/uncertainty/results/CTPET/LFM/summary_metrics.csv"
+ROOT_DIR = "/Users/francescodifeola/Desktop/omega/uncertainty/results/MRCT/LDM"   # <-- change this
+OUTPUT_CSV = "/Users/francescodifeola/Desktop/omega/uncertainty/results/MRCT/LDM/summary_metrics.csv"
 
 METRICS = [
     "MSE",
@@ -257,7 +257,6 @@ summary_df.to_csv(OUTPUT_CSV, index=False)
 print("\n===== SUMMARY TABLE =====\n")
 print(summary_df)
 print(f"\nSaved to {OUTPUT_CSV}")
-
 
 df = pd.read_csv("/Users/francescodifeola/Desktop/omega/uncertainty/results/T1T2/LFM/self_refinement_k10/metrics_epoch_50_K10_ablation_only_small_perturb.csv")
 

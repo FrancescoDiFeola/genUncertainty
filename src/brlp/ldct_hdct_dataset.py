@@ -37,8 +37,17 @@ class LDCTHDCTDataset():
         else:
             return (2 * x_norm) - 1  # Map between -1 and 1
 
-    def __init__(self, annotation_A, annotation_B, window_width=1400, window_center=-400, height=256, width=256,
-                 unpaired=False):
+    def __init__(self, annotation_A,
+                 annotation_B,
+                 window_width=1400,
+                 window_center=-400,
+                 height=256,
+                 width=256,
+                 unpaired=False,
+                 perturbation_type=None,     # None, "gaussian", "uniform", "impulse"
+                 noise_level=0,              # 0=NL0, 1=NL1, 2=NL2, 3=NL3
+                 deterministic_noise=True,
+                 base_seed=1234):
         """
         Initialize the dataset with annotations and image processing parameters.
 
@@ -50,6 +59,19 @@ class LDCTHDCTDataset():
             height (int): Height of the image after resizing.
             width (int): Width of the image after resizing.
             unpaired (bool): Whether the dataset is unpaired, which will shuffle data.
+                Dataset with optional controlled test-time perturbation.
+
+        perturbation_type:
+            None        -> clean
+            "gaussian"  -> additive Gaussian noise
+            "uniform"   -> additive Uniform noise
+            "impulse"   -> impulse (salt-like) noise
+
+        noise_level:
+            NL0 = 0
+            NL1 = 1
+            NL2 = 2
+            NL3 = 3
         """
 
 
@@ -68,6 +90,12 @@ class LDCTHDCTDataset():
         self.A_size = len(self.annotations_A)  # Get the size of dataset A
         self.B_size = len(self.annotations_B)  # Get the size of dataset B
         self.dataset_len = max(self.A_size, self.B_size)  # Max length between A and B
+
+        # Noise configuration
+        self.perturbation_type = perturbation_type
+        self.noise_level = noise_level
+        self.deterministic_noise = deterministic_noise
+        self.base_seed = base_seed
 
         self.plot_verbose = False
 
@@ -190,6 +218,9 @@ class LDCTHDCTDataset():
         img_name_B = self.annotations_B['img_name'].iloc[index % self.B_size]
         img_raw_B = pydicom.dcmread(img_path_B, force=True)  # Read the DICOM file
         img_B = self.transforms(img_raw_B)  # Apply transformations
+
+        # Apply perturbation ONLY to source image
+        img_A = self._apply_noise(img_A, index)
 
         return {'A': img_A, 'B': img_B, 'A_paths': img_path_A, 'B_paths': img_path_B}
 

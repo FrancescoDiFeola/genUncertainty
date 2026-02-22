@@ -38,9 +38,17 @@ cd /mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion
 
 # python3 ./test_ddpm.py  --num_workers 8 --experiment_name "ddpm_b16_T1T2" --diff_ckpt "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/uncertainty_diffusion/checkpoints/ddpm_b16_T1T2/diffusion-ep-200.pth"
 
-# python3 ./train_ddpm.py --num_workers 8 --experiment_name "ddpm" --task "T1T2_Oasis" --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase train --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
-# python3 ./train_ddpm_aleatoric.py --num_workers 8 --experiment_name "ddpm_aleatoric" --task "T1T2_Oasis" --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase train --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
-# python3 ./train_ddpm_aleatoric_two_forward.py  --num_workers 8 --experiment_name "aleatoric_two_forward" --task "T1T2_Oasis" --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase train --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
+# python3 ./train_ddpm.py --num_workers 8 --experiment_name "ddpm" --task "CBCTtoCT"
+# --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase train --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
+# python3 ./train_ddpm_aleatoric.py --num_workers 8 --experiment_name "ddpm_aleatoric" --task "CBCTtoCT"
+# --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase train --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
+# python3 ./train_ddpm_aleatoric_two_forward.py  --num_workers 8 --experiment_name "aleatoric_two_forward" --spatial_enc_channels 1 --task "T1T2_Oasis" --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase train --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
+
+############################################ Flow-matching ##################################################
+# python3 ./train_RF.py --num_workers 8 --experiment_name "RF" --task "CBCTtoCT"
+python3 ./train_RF_aleatoric.py --num_workers 8 --experiment_name "RF_aleatoric" --task "CBCTtoCT"
+# python3 ./train_RF_aleatoric_two_forward.py  --num_workers 8 --experiment_name "aleatoric_two_forward" --spatial_enc_channels 1 --task "CBCTtoCT"
+#############################################################################################################
 
 
 
@@ -113,7 +121,7 @@ cd /mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion
 ############ LFM ###################
 # python3 ./train_LFM.py --num_workers 8 --experiment_name "LFM_MRtoCT" --task "MRtoCT" --in_ch 6 --out_ch 3
 # --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase train --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
-python3 ./train_LFM_aleatoric.py --num_workers 8 --experiment_name "LFM_aleatoric_MRCT" --task "MRtoCT" --in_ch 6 --out_ch 3
+# python3 ./train_LFM_aleatoric.py --num_workers 8 --experiment_name "LFM_aleatoric_MRCT" --task "MRtoCT" --in_ch 6 --out_ch 3
 # --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase train --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
 # python3 ./train_LFM_aleatoric_two_forward.py --num_workers 8 --experiment_name "LFM_aleatoric_two_forward_T1T2" --spatial_enc_channels 3 --task "T1T2_Oasis" --in_ch 6 --out_ch 3 --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase train --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
 ####################################

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #SBATCH -A NAISS2025-5-662 -p alvis
-#SBATCH -C NOGPU
-#SBATCH -t 0-01:00:00
+#SBATCH -N 1 --gpus-per-node=A40:1
+#SBATCH -t 7-00:00:00
 # Output files
 #SBATCH --error=./error/job_%J.err
 #SBATCH --output=./output/out_%J.out
@@ -21,11 +21,11 @@ source bin/activate
 
 
 # Executes the code 
-cd /mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/utils
+cd /mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/
 
 # Train HERE YOU RUN YOUR PROGRAM
 
 # python ./prepare_dataset.py
-# python ./pretrain_VAE.py
+python ./pretrain_VAE.py
 # python ./save_latents_from_VAE.py
-python ./csv_utils_2.py
+# python ./csv_utils_2.py
