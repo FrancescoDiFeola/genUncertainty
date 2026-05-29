@@ -21,6 +21,8 @@ from src.brlp.ldct_hdct_dataset import LDCTHDCTDataset
 from src.brlp.MR_to_CT import  MRCTPaired
 from src.brlp.CBCTtoCT_dataset import CBCTCTPaired
 import numpy as np
+from src.brlp.motionArtifact_dataset import MotionT1Dataset
+
 # ----------------------------------------------
 # ✅ Set environment
 # ----------------------------------------------
@@ -339,8 +341,8 @@ if __name__ == '__main__':
     experiment_dir = os.path.join(f"{args.output_dir}/{args.task}", args.experiment_name)
     os.makedirs(experiment_dir, exist_ok=True)
 
-    # args.diff_ckpt = os.path.join(experiment_dir, f"diffusion-ep-{args.epoch_start}.pth")
-    # args.context_ckpt = os.path.join(experiment_dir, f"spatial_encoder-ep-{args.epoch_start}.pth")
+    args.diff_ckpt = os.path.join(experiment_dir, f"diffusion-ep-{args.epoch_start}.pth")
+    args.context_ckpt = os.path.join(experiment_dir, f"spatial_encoder-ep-{args.epoch_start}.pth")
     # print(args.diff_ckpt, args.context_ckpt)
     # -----------------------
     # ✅ Load dataset
@@ -352,6 +354,15 @@ if __name__ == '__main__':
             annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_A.csv',
             annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_B.csv',
 
+        )
+
+    elif args.task == "T1motion":
+
+        dataset = MotionT1Dataset(
+            annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_A.csv',
+            annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_B.csv',
+            mode="train",
+            motion_range=(0.0, 0.15),
         )
 
     elif args.task == "CS":

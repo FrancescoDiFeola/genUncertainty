@@ -162,34 +162,46 @@ class LDCTHDCTDataset():
         else:
             g = None
 
+        C, H, W = img.shape
+
         # -------------------------
         # Gaussian
         # -------------------------
         if self.perturbation_type == "gaussian":
-            noise = torch.randn_like(img, generator=g) * param
-            img = img + noise
+            if g is not None:
+                noise = torch.randn((C, H, W), generator=g, device=img.device)
+            else:
+                noise = torch.randn((C, H, W), device=img.device)
+
+            img = img + noise * param
 
         # -------------------------
         # Uniform
         # -------------------------
         elif self.perturbation_type == "uniform":
-            noise = torch.rand_like(img, generator=g) * param
-            img = img + noise
+            if g is not None:
+                noise = torch.rand((C, H, W), generator=g, device=img.device)
+            else:
+                noise = torch.rand((C, H, W), device=img.device)
+
+            img = img + noise * param
 
         # -------------------------
         # Impulse
         # -------------------------
         elif self.perturbation_type == "impulse":
-            C, H, W = img.shape
 
-            # Bernoulli mask (1 = replace pixel)
-            mask = torch.bernoulli(
-                torch.full((1, H, W), param, device=img.device),
-                generator=g
-            )
-
-            # Random color image
-            random_img = torch.rand_like(img, generator=g)
+            if g is not None:
+                mask = torch.bernoulli(
+                    torch.full((1, H, W), param, device=img.device),
+                    generator=g
+                )
+                random_img = torch.rand((C, H, W), generator=g, device=img.device)
+            else:
+                mask = torch.bernoulli(
+                    torch.full((1, H, W), param, device=img.device)
+                )
+                random_img = torch.rand((C, H, W), device=img.device)
 
             img = mask * random_img + (1 - mask) * img
 

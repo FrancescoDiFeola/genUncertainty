@@ -12,7 +12,7 @@ from src.brlp.CS_dataset import CityscapesColorDataset
 from src.brlp import networks
 from src.inference.inference_RF import *
 from src.inference.utils import initialize_writers
-
+from src.brlp.CBCTtoCT_dataset import CBCTCTPaired
 # -----------------------
 # ✅ Set environment
 # -----------------------
@@ -96,6 +96,13 @@ if __name__ == '__main__':
             annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D2/annotations_test_fulldose_GAN_D2_nuovo_ordinato.csv',
             # annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_LOWDOSE.csv',
             # annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/File_annotations/Annotations_D1/Mayo_total_ordinato_FULLDOSE.csv',
+        )
+
+    elif args.task == "CBCTtoCT":
+
+        dataset = CBCTCTPaired(
+            csv_path= "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/Task2/cbct_ct_dataset_test.csv",
+            output_size=256,
         )
 
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)

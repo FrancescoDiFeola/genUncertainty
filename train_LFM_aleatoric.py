@@ -22,7 +22,8 @@ from src.brlp.CS_dataset import CityscapesColorDataset
 from src.brlp.Mri2DSlice_dataset import Mri2DSlicedataset
 from src.brlp.ND_dataset import PairedImageDataset
 from src.VAE.utils.checkpoints_utils import load_checkpoint
-
+from src.brlp.CBCTtoCT_dataset import CBCTCTPaired
+from src.brlp.motionArtifact_dataset import MotionT1Dataset
 
 # -----------------------
 # ✅ Set environment
@@ -104,7 +105,7 @@ if __name__ == '__main__':
     experiment_dir = os.path.join(f"{args.output_dir}/{args.task}", args.experiment_name)
     os.makedirs(experiment_dir, exist_ok=True)
 
-    args.VAE_ckpt = os.path.join(args.output_dir, "T1T2", "VAE")
+    args.VAE_ckpt = os.path.join(args.output_dir, args.task, "VAE")
     # -----------------------
     # ✅ Load dataset
     # -----------------------
@@ -117,6 +118,16 @@ if __name__ == '__main__':
 
         )
         scaling_factor = 9.404202
+
+    elif args.task == "T1motion":
+
+        dataset = MotionT1Dataset(
+            annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_A.csv',
+            annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_B.csv',
+            mode="train",
+            motion_range=(0.0, 0.15),
+        )  # test_dataset_lvl_0 = T1T2Dataset(..., mode="test", fixed_motion_level=0.0)
+        scaling_factor = 5.634654
 
     elif args.task == "CS":
         transform = transforms.Compose([
@@ -160,6 +171,13 @@ if __name__ == '__main__':
         dataset = Mri2DSlicedataset(args)
         scaling_factor = 9.404202
 
+    elif args.task == "CBCTtoCT":
+
+        dataset = CBCTCTPaired(
+            csv_path= "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/Task2/cbct_ct_dataset_train.csv",
+            output_size=256,
+        )
+        scaling_factor=9.744896
     train_loader = DataLoader(dataset=dataset,
                               batch_size=args.batch_size,
                               shuffle=True,

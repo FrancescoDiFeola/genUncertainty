@@ -15,7 +15,8 @@ from src.VAE.utils.checkpoints_utils import load_checkpoint
 from src.inference.inference_LFM import *
 from src.inference.utils import initialize_writers
 from src.brlp.MR_to_CT import MRCTPaired
-
+from src.brlp.CBCTtoCT_dataset import CBCTCTPaired
+from src.brlp.motionArtifact_dataset import MotionT1Dataset
 # -----------------------
 # ✅ Set environment
 # -----------------------
@@ -32,12 +33,14 @@ if __name__ == '__main__':
     parser.add_argument('--epoch', default=None, type=str)
     parser.add_argument('--experiment_name', type=str, required=True)
     parser.add_argument('--task', required=True, type=str)
+    parser.add_argument('--motion_level', default=1, type=str)
     parser.add_argument('--analysis', type=str, required=False)
     parser.add_argument('--batch_size', default=1, type=int)
     parser.add_argument('--num_workers', default=4, type=int)
     parser.add_argument('--in_ch', default=2, type=int)
     parser.add_argument('--out_ch', default=1, type=int)
     parser.add_argument('--MC_sampling', action="store_true")
+    parser.add_argument('--n_sampling', default=4, type=int)
 
     parser.add_argument('--dataroot', required=False, help='path to images (should have subfolders trainA, trainB, valA, valB, etc)')
     parser.add_argument('--mri_modalities', default=["t1n", "t1c", "t2w", "t2f"], help='which MRI modality to use', nargs='+', type=str)
@@ -61,11 +64,24 @@ if __name__ == '__main__':
     scaling_factor = 1
     # Load the LDCT/HDCT dataset
     if args.task == "T1T2":
+        # dataset = Mri2DSlicedataset(args)
+        # scaling_factor = 9.404202
+
         dataset = T1T2Dataset(
             annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_A_test.csv',
             annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_B_test.csv',
         )
         scaling_factor = 9.404202
+
+    elif args.task == "T1motion":
+
+        dataset = MotionT1Dataset(
+            annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_A_test.csv',
+            annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_B_test.csv',
+            mode="test",
+            fixed_motion_level = float(args.motion_level),
+        )  # test_dataset_lvl_0 = T1T2Dataset(..., mode="test", fixed_motion_level=0.0
+        scaling_factor = 5.634654
 
     elif args.task == "CS":
         transform = transforms.Compose([
@@ -115,6 +131,14 @@ if __name__ == '__main__':
         )
         scaling_factor = 6.640712
 
+    elif args.task == "CBCTtoCT":
+
+        dataset = CBCTCTPaired(
+            csv_path="/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/Task2/cbct_ct_dataset_test.csv",
+            output_size=256,
+        )
+        scaling_factor = 9.744896
+
     loader = DataLoader(dataset,
                         batch_size=args.batch_size,
                         shuffle=False,
@@ -162,7 +186,7 @@ if __name__ == '__main__':
 
     if args.analysis == "sparsification":
 
-        csv_path = os.path.join(experiment_dir, f"sparsification_S_8_epoch_{args.epoch}.csv")
+        csv_path = os.path.join(experiment_dir, f"sparsification_S_{args.n_sampling}_epoch_{args.epoch}_motion_{args.motion_level}.csv")
         writer_csv = initialize_writers(csv_path, writer_type=args.analysis)[1]
 
     elif args.analysis == "metrics":
@@ -172,7 +196,11 @@ if __name__ == '__main__':
 
     elif args.analysis == "metrics_no_uncertainty":
 
-        csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}.csv")
+        csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_{args.motion_level}.csv")
+        writer_csv = initialize_writers(csv_path, writer_type=args.analysis)[1]
+
+    elif args.analysis == "uncertainty_eval":
+        csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_uncertainty_eval_{args.motion_level}_S_{args.n_sampling}.csv")
         writer_csv = initialize_writers(csv_path, writer_type=args.analysis)[1]
 
     if args.MC_sampling:
@@ -198,11 +226,11 @@ if __name__ == '__main__':
                     device=DEVICE,
                     scheduler=scheduler,
                     scaling=scaling_factor,
-                    csv_writer=writer_csv
+                    csv_writer=writer_csv,
+                    n_sampling=args.n_sampling,
                 )
 
             elif args.analysis == "metrics":
-
                 run_inference_LFM_vanilla_and_log_MC_sampling(
                     diffusion_model=diffusion,
                     autoencoder=autoencoder,
@@ -214,6 +242,20 @@ if __name__ == '__main__':
                     scheduler=scheduler,
                     scaling=scaling_factor,
                     csv_writer=writer_csv
+                )
+            elif args.analysis == "uncertainty_eval":
+                run_inference_LFM_vanilla_and_log_MC_sampling_uncertainty_eval(
+                    diffusion_model=diffusion,
+                    autoencoder=autoencoder,
+                    condition_batch=img_A_latent,
+                    gt_batch=img_B,
+                    writer=writer,
+                    step=step,
+                    device=DEVICE,
+                    scheduler=scheduler,
+                    scaling=scaling_factor,
+                    csv_writer=writer_csv,
+                    n_sampling=args.n_sampling,
                 )
 
         print(f"✅ Inference complete. Metrics saved to {csv_path}")

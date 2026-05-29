@@ -14,6 +14,8 @@ from src.VAE.data.dataset_Denoising import LDCTHDCTDataset
 from src.VAE.data.dataset_T1T2 import T1T2Dataset
 from src.VAE.data.dataset_CTPET import CTPETDataset
 from src.VAE.data.dataset_MRtoCT import MRCTSingleImageDataset
+from src.VAE.data.dataset_CBCTtoCT import CBCTCTSingleImageDataset
+from src.VAE.data.dataset_motionT1 import MotionT1VaeDataset
 import csv
 
 # --- CONFIGURAZIONE ---
@@ -85,7 +87,7 @@ autoencoder = AutoencoderKL(
 )
 autoencoder = autoencoder.to(DEVICE)
 
-checkpoint_dir = "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/MRtoCT/VAE"
+checkpoint_dir = "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/CBCTtoCT/VAE"
 _ = load_checkpoint(autoencoder, optimizer=None, checkpoint_dir=checkpoint_dir, model_name="autoencoder")
 autoencoder.eval()
 
@@ -104,7 +106,16 @@ if __name__ == "__main__":
 
     # dataset = CTPETDataset(opt)
 
-    dataset = MRCTSingleImageDataset(csv_path="/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/mr_ct_dataset_train.csv")
+    # dataset = MRCTSingleImageDataset(csv_path="/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/mr_ct_dataset_train.csv")
+    # dataset = CBCTCTSingleImageDataset(csv_path="/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/Task2/cbct_ct_dataset_train.csv")
+
+    dataset = MotionT1VaeDataset(
+        annotation_T1='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_A.csv',
+        mode="train",
+        motion_range=(0.0, 0.15),  # moderate corruption
+        base_seed=1234,
+        include_clean=True  # mix clean + corrupted
+    )
 
     loader = DataLoader(
         dataset,

@@ -53,6 +53,14 @@ def initialize_writers(
 
         return (csvfile, writer)
 
+    elif writer_type == "uncertainty_eval":
+        csvfile= open(csv_path, mode='w', newline='')
+        fieldnames = ['Sample', 'MAE', 'u_mean', 'u_p95', 'u_p99', 'u_top1_mean', 'top5_u_mean']
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+
+        return (csvfile, writer)
+
     elif writer_type == "calibration":
 
         csvfile_2 = open(csv_path_2, mode='w', newline='')
@@ -376,3 +384,91 @@ def collect_calibration_data(
         bin_count.append(idx.sum().item())
 
     return bin_unc_mean, bin_err_mean, bin_count
+
+def summarize_uncertainty(U):
+
+    """
+
+    Compute compact statistics from an uncertainty map.
+
+    Parameters
+
+    ----------
+
+    U : np.ndarray or torch.Tensor
+
+        Uncertainty map of shape:
+
+        - (H, W)
+
+        - (1, H, W)
+
+        - (C, H, W)
+
+    Returns
+
+    -------
+
+    dict
+
+        {
+
+            "u_mean",
+
+            "u_p95",
+
+            "u_p99",
+
+            "u_top1_mean",
+
+            "u_top5_mean"
+
+        }
+
+    """
+
+    # convert torch -> numpy if needed
+
+    if hasattr(U, "detach"):
+
+        U = U.detach().cpu().numpy()
+
+    U = np.asarray(U).astype(np.float64)
+
+    # flatten
+
+    u = U.reshape(-1)
+
+    # percentiles
+
+    u_p95 = np.percentile(u, 95)
+
+    u_p99 = np.percentile(u, 99)
+
+    # top-k means
+
+    n = len(u)
+
+    top1_k = max(1, int(0.01 * n))
+
+    top5_k = max(1, int(0.05 * n))
+
+    u_sorted = np.sort(u)
+
+    u_top1_mean = np.mean(u_sorted[-top1_k:])
+
+    u_top5_mean = np.mean(u_sorted[-top5_k:])
+
+    return {
+
+        "u_mean": float(np.mean(u)),
+
+        "u_p95": float(u_p95),
+
+        "u_p99": float(u_p99),
+
+        "u_top1_mean": float(u_top1_mean),
+
+        "u_top5_mean": float(u_top5_mean),
+
+    }

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #SBATCH -A NAISS2025-5-662 -p alvis
-#SBATCH -N 1 --gpus-per-node=A40:1
-#SBATCH -t 2-00:00:00
+#SBATCH -N 1 --gpus-per-node=A100:1
+#SBATCH -t 0-12:00:00
 # Output files
 #SBATCH --error=./error/job_%J.err
 #SBATCH --output=./output/out_%J.out
@@ -55,22 +55,38 @@ cd /mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion
 ###################################################### Metrics ANALYSIS ###########################################################################################
 
 
-# python3 ./test_ddpm.py  --num_workers 8 --experiment_name "ddpm" --epoch "40" --task "CBCTtoCT" --analysis "metrics_no_uncertainty"
-# python3 ./test_ddpm_aleatoric_two_forward.py  --num_workers 8 --experiment_name "aleatoric_two_forward" --epoch "40" --task "T1T2_Oasis" --analysis "both" --spatial_enc_channels 1 --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase test --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
-
-# python3 ./test_RF.py --num_workers 8 --experiment_name "RF_MRtoCT" --epoch "250" --task "MRtoCT" --analysis "metrics_no_uncertainty"
+# python3 ./test_ddpm.py  --num_workers 8 --experiment_name "ddpm" --epoch "160" --task "CBCTtoCT" --analysis "sparsification" # --perturbation_type "impulse" --perturbation_level 3
 # --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase test --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
-# python3 ./test_RF_aleatoric_two_forward.py --num_workers 8 --experiment_name "RF_aleatoric_two_forward_MRtoCT" --task "MRtoCT" --spatial_enc_channels 1 --epoch "200" --analysis "both"
+# python3 ./test_ddpm_aleatoric_two_forward.py  --num_workers 8 --experiment_name "aleatoric_two_forward" --epoch "160" --task "CBCTtoCT" --analysis "sparsification" --spatial_enc_channels 1 # --perturbation_type "impulse" --perturbation_level 3
+# --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase test --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
+
+# python3 ./test_RF.py --num_workers 8 --experiment_name "RF" --epoch "160" --task "CBCTtoCT" --analysis "metrics_no_uncertainty"# --analysis "sparsification" --MC_sampling
+# --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase test --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
+# python3 ./test_RF_aleatoric_two_forward.py --num_workers 8 --experiment_name "RF_aleatoric_two_forward_denoising" --task "denoising" --spatial_enc_channels 1 --epoch "50" --analysis "both"
 # --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase train --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
 
-# python3 ./test_LDM.py  --num_workers 8 --experiment_name "LDM_MRCT" --task "MRtoCT" --epoch "160" --in_ch 6 --out_ch 3 --analysis "metrics_no_uncertainty"
-# python3 ./test_LDM_aleatoric_two_forward.py  --num_workers 8 --experiment_name "LDM_aleatoric_two_forward" --task "MRtoCT" --analysis "metrics" --epoch "160" --spatial_enc_channels 3 --in_ch 6 --out_ch 3
+# --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase train --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
+# python3 ./test_LDM.py  --num_workers 8 --experiment_name "LDM_CBCTCT" --task "CBCTtoCT" --epoch "260" --in_ch 6 --out_ch 3 --analysis "metrics_no_uncertainty"
+# --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase test --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
+# --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase test --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
+python3 ./test_LDM_aleatoric_two_forward.py  --num_workers 8 --experiment_name "LDM_aleatoric_two_forward_CBCTCT" --task "CBCTtoCT" --analysis "metrics" --epoch "260" --spatial_enc_channels 3 --in_ch 6 --out_ch 3
+# --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase test --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
+# --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase test --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
+# python3 ./test_LFM.py  --num_workers 8 --experiment_name "LFM_CBCTCT" --task "CBCTtoCT" --epoch "160" --in_ch 6 --out_ch 3 --analysis "metrics_no_uncertainty"
+# --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase test --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
+# --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase test --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
+# python3 ./test_LFM_two_forward.py  --num_workers 8 --experiment_name "LFM_aleatoric_two_forward_T1T2" --task "T1T2" --epoch "50" --in_ch 6 --out_ch 3 --spatial_enc_channels 3 --analysis "metrics" --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase test --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
+
+# python3 ./test_LFM.py  --num_workers 8 --experiment_name "LFM_CBCTCT" --task "CBCTtoCT" --epoch "40" --in_ch 6 --out_ch 3 --analysis "metrics_no_uncertainty"
+# --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase test --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
+# --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase test --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
+# python3 ./test_LFM_two_forward.py  --num_workers 8 --experiment_name "LFM_aleatoric_two_forward_CBCTCT" --task "CBCTtoCT" --epoch "160" --in_ch 6 --out_ch 3 --spatial_enc_channels 3 --analysis "metrics"
 # --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase test --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
 
-# python3 ./test_LFM.py  --num_workers 8 --experiment_name "LFM_MRtoCT" --task "MRtoCT" --epoch "160" --in_ch 6 --out_ch 3 --analysis "metrics_no_uncertainty"
-python3 ./test_LFM_two_forward.py  --num_workers 8 --experiment_name "LFM_aleatoric_two_forward_MRCT" --task "MRtoCT" --epoch "160" --in_ch 6 --out_ch 3 --spatial_enc_channels 3 --analysis "metrics"
 # --dataroot "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  --phase test --slice_range 0 10000 --mri_modalities t1n t2w --under_sample_dataset
 
+# python3 ./test_LDM_aleatoric.py  --num_workers 8 --experiment_name "LDM_aleatoric_CBCTCT" --task "CBCTtoCT" --epoch "40" --in_ch 6 --out_ch 3
+# python3 ./test_LFM_aleatoric.py  --num_workers 8 --experiment_name "LFM_aleatoric_CBCTCT" --task "CBCTtoCT" --epoch "40" --in_ch 6 --out_ch 3 --analysis "metrics"
 ###########################################################################################################################################################################
 
 

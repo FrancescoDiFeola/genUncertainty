@@ -12,6 +12,7 @@ from src.brlp.CS_dataset import CityscapesColorDataset
 from src.brlp import networks
 from src.inference.inference_ddpm import *
 from src.inference.utils import initialize_writers
+from src.brlp.motionArtifact_dataset import MotionT1Dataset
 
 # -----------------------
 # ✅ Set environment
@@ -28,6 +29,7 @@ if __name__ == '__main__':
     parser.add_argument('--diff_ckpt', type=str, required=False)
     parser.add_argument('--task', required=True, type=str)
     parser.add_argument('--analysis', type=str, required=False)
+    parser.add_argument('--motion_level', default=1, type=str)
     parser.add_argument('--epoch', default=None, type=str)
     parser.add_argument('--experiment_name', type=str, required=True)
     parser.add_argument('--batch_size', default=1, type=int)
@@ -58,6 +60,14 @@ if __name__ == '__main__':
             annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_A_test.csv',
             annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_B_test.csv',
         )
+    elif args.task == "T1motion":
+
+        dataset = MotionT1Dataset(
+            annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_A_test.csv',
+            annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_B_test.csv',
+            mode="test",
+            fixed_motion_level = float(args.motion_level),
+        )  # test_dataset_lvl_0 = T1T2Dataset(..., mode="test", fixed_motion_level=0.0)
 
     elif args.task == "CS":
         transform = transforms.Compose([
@@ -115,12 +125,12 @@ if __name__ == '__main__':
 
     if args.analysis == "sparsification":
 
-        csv_path = os.path.join(experiment_dir, f"sparsification_epoch_{args.epoch}.csv")
+        csv_path = os.path.join(experiment_dir, f"sparsification_epoch_{args.epoch}_motion_{args.motion_level}.csv")
         writer_csv = initialize_writers(csv_path, writer_type=args.analysis)[1]
 
     elif args.analysis == "both":
 
-        csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_image_uncertainty.csv")
+        csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_image_uncertainty_motion_{args.motion_level}.csv")
         csv_path_2 = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_uncertainty_calibration.csv")
         writer_ = initialize_writers(csv_path, csv_path_2, writer_type=args.analysis)
         writer_csv = writer_[2]

@@ -20,6 +20,7 @@ from src.brlp.ND_dataset import PairedImageDataset
 from src.brlp.ldct_hdct_dataset import LDCTHDCTDataset
 from src.brlp.MR_to_CT import  MRCTPaired
 from src.brlp.CBCTtoCT_dataset import CBCTCTPaired
+from src.brlp.motionArtifact_dataset import MotionT1Dataset
 
 # -----------------------
 # ✅ Set environment
@@ -272,6 +273,15 @@ if __name__ == '__main__':
     elif args.task == "T1T2_Oasis":
 
         dataset = Mri2DSlicedataset(args)
+
+    elif args.task == "T1motion":
+
+        dataset = MotionT1Dataset(
+            annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_A.csv',
+            annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_B.csv',
+            mode="train",
+            motion_range=(0.0, 0.15),
+        )
 
     elif args.task == "CBCTtoCT":
 

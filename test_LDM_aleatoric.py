@@ -16,7 +16,7 @@ from src.brlp.MR_to_CT import  MRCTPaired
 from src.VAE.utils.checkpoints_utils import load_checkpoint
 from src.inference.inference_LDM import *
 from src.inference.utils import initialize_writers
-
+from src.brlp.CBCTtoCT_dataset import CBCTCTPaired
 # -----------------------
 # ✅ Set environment
 # -----------------------
@@ -106,6 +106,14 @@ if __name__ == '__main__':
             output_size=256,
         )
         scaling_factor = 6.640712
+
+    elif args.task == "CBCTtoCT":
+
+        dataset = CBCTCTPaired(
+            csv_path="/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/Task2/cbct_ct_dataset_test.csv",
+            output_size=256,
+        )
+        scaling_factor = 9.744896
 
     loader = DataLoader(dataset,
                         batch_size=args.batch_size,

@@ -182,8 +182,8 @@ import numpy as np
 # CONFIG
 # ============================================================
 
-ROOT_DIR = "/Users/francescodifeola/Desktop/omega/uncertainty/results/MRCT/LDM"   # <-- change this
-OUTPUT_CSV = "/Users/francescodifeola/Desktop/omega/uncertainty/results/MRCT/LDM/summary_metrics.csv"
+ROOT_DIR = "/Users/francescodifeola/Desktop/omega/uncertainty/results/T1T2//FM/FM_aleatoric"   # <-- change this
+OUTPUT_CSV = "/Users/francescodifeola/Desktop/omega/uncertainty/results/T1T2/FM/FM_aleatoric/summary_metrics.csv"
 
 METRICS = [
     "MSE",
@@ -227,6 +227,7 @@ for experiment in sorted(os.listdir(ROOT_DIR)):
     csv_files = glob.glob(os.path.join(exp_path, "metrics_epoch_*.csv"))
 
     for csv_path in csv_files:
+        print(csv_path)
         df = pd.read_csv(csv_path)
 
         epoch, split = parse_epoch_and_split(csv_path)

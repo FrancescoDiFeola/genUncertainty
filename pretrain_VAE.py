@@ -24,6 +24,7 @@ from src.VAE.data.dataset_MRtoCT import MRCTSingleImageDataset
 from src.VAE.data.dataset_T1T2 import T1T2Dataset
 from src.VAE.data.dataset_CTPET import CTPETDataset
 from src.VAE.data.dataset_CBCTtoCT import CBCTCTSingleImageDataset
+from src.VAE.data.dataset_motionT1 import MotionT1VaeDataset
 from torch import nn
 
 
@@ -279,6 +280,16 @@ def train_autoencoder(opt):
     elif opt.task == "T1T2_Oasis":
         dataset = CTPETDataset(opt)
 
+    elif opt.task == "T1motion":
+
+        dataset = MotionT1VaeDataset(
+            annotation_T1= '/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_A.csv',
+            mode="train",
+            motion_range=(0.0, 0.15),  # moderate corruption
+            base_seed=1234,
+            include_clean=True  # mix clean + corrupted
+        )
+
     elif opt.task == "CBCTtoCT":
         dataset = CBCTCTSingleImageDataset(csv_path="/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/Task2/cbct_ct_dataset_train.csv")
 
@@ -369,7 +380,7 @@ def train_autoencoder(opt):
     #avgloss = utils.AverageLoss()
     #total_counter = 0  # print(f"TensorBoard logging directory: {writer.log_dir}")
     #checkpoint_dir = "/mimer/NOBACKUP/groups/naiss2023-6-336/lcarusone/TESI_MAGISTRALE/src/VAE/checkpoints"
-    checkpoint_dir = "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/MRtoCT/VAE_"
+    checkpoint_dir = "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/T1motion/VAE"
     # checkpoint_dir = "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/CBCTtoCT/VAE"
 
     # **Load Checkpoints from checkpoint.py**

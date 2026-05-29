@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from skimage.metrics import peak_signal_noise_ratio as compute_psnr, structural_similarity as compute_ssim
 import torch
 import os
-from src.inference.utils import sparsification_curve_fast, random_sparsification_fast, norm_percentile, collect_calibration_data, map_correlations_multi_thresholds
+from src.inference.utils import sparsification_curve_fast, random_sparsification_fast, norm_percentile, collect_calibration_data, map_correlations_multi_thresholds, summarize_uncertainty
 
 ############### DDPM self-refining ####################
 @torch.no_grad()
@@ -803,7 +803,7 @@ def run_inference_and_log_v3_clean_unc_integral(  # in this function the uncerta
         if int(step) == 1:
             for b in range(B):
                 arr = norm_second[b].squeeze(0).numpy()
-                png_path = os.path.join(dir, f"sample{b}_{step}_t_step{int(t)}_epoch_350.png")
+                png_path = os.path.join(dir, f"sample{b}_{step}_t_step{int(t)}_epoch_350.pdf")
                 plt.imsave(png_path, arr, cmap='hot')
 
     pred_denoised = x
@@ -819,6 +819,46 @@ def run_inference_and_log_v3_clean_unc_integral(  # in this function the uncerta
     unc = norm_percentile(uncertainty_map).cpu().detach()
     error = norm_percentile(abs(pred - gt))
 
+    ######################
+    """
+    if step == 60 or step == 70 or step == 100 or step == 15 or step == 120 or step == 25 or step == 30:
+        # Create figure
+        fig, axes = plt.subplots(1, 5, figsize=(20, 4))
+
+        # ---- LD ----
+        im0 = axes[0].imshow(ld[0,0], cmap="gray")
+        axes[0].set_title("LD")
+        axes[0].axis("off")
+
+        # ---- GT ----
+        im1 = axes[1].imshow(gt[0,0], cmap="gray")
+        axes[1].set_title("GT")
+        axes[1].axis("off")
+
+        # ---- PRED ----
+        im2 = axes[2].imshow(pred[0,0], cmap="gray")
+        axes[2].set_title("Prediction")
+        axes[2].axis("off")
+
+        # ---- UNCERTAINTY (with colorbar) ----
+        im3 = axes[3].imshow(unc[0,0], cmap="jet")
+        axes[3].set_title("Uncertainty")
+        axes[3].axis("off")
+        fig.colorbar(im3, ax=axes[3], fraction=0.046, pad=0.04)
+
+        # ---- ERROR (with colorbar) ----
+        im4 = axes[4].imshow(error[0,0], cmap="jet")
+        axes[4].set_title("Error")
+        axes[4].axis("off")
+        fig.colorbar(im4, ax=axes[4], fraction=0.046, pad=0.04)
+
+        plt.tight_layout()
+
+        # Save as PDF
+        plt.savefig(f"comparison_{step}.pdf", bbox_inches="tight", dpi=300)
+        plt.close()
+    ######################
+    """
     fig, axes = plt.subplots(nrows=B, ncols=5, figsize=(8, 2.5 * B))
     if B == 1:
         axes = [axes]
@@ -837,12 +877,13 @@ def run_inference_and_log_v3_clean_unc_integral(  # in this function the uncerta
         unc_raw = uncertainty_map[i][0].cpu()
         err_raw = (pred[i][0] - gt[i][0]).abs()
 
+        """
         bin_u, bin_e, bin_n = collect_calibration_data(
             unc_raw,
             err_raw,
             num_bins=15
         )
-
+        
         # Log per-bin values for later plotting
         for k in range(len(bin_u)):
             csv_writer_2.writerow({
@@ -853,29 +894,22 @@ def run_inference_and_log_v3_clean_unc_integral(  # in this function the uncerta
                 'Count': bin_n[k],
                 'Type': 'calibration'
             })
+        """
 
         ######### Compute metrics #########
-        psnr = compute_psnr(gt_array, pred_array, data_range=gt[i][0].numpy().max() - gt[i][0].numpy().min())
-        ssim = compute_ssim(gt_array, pred_array, data_range=gt[i][0].numpy().max() - gt[i][0].numpy().min())
-        mse = np.mean((gt_array - pred_array) ** 2)
         # psnr = compute_psnr(gt_array, pred_array, data_range=gt[i][0].numpy().max() - gt[i][0].numpy().min())
         # ssim = compute_ssim(gt_array, pred_array, data_range=gt[i][0].numpy().max() - gt[i][0].numpy().min())
         # mse = np.mean((gt_array - pred_array) ** 2)
-        correlations_norm = map_correlations_multi_thresholds(unc[i][0].cpu().detach().numpy(), pred_array, gt_array)
-        correlations_unnorm = map_correlations_multi_thresholds(uncertainty_map[i][0].cpu().detach().numpy(), pred_array, gt_array)
+        mae = np.mean(np.abs(gt_array - pred_array))
 
-        print(psnr, ssim, mse,
-              correlations_norm["pearson"],
-              correlations_norm["spearman"],
-              correlations_norm["AUROC_top15"],
-              correlations_norm["AUROC_top10"],
-              correlations_norm["AUROC_top5"],
-              correlations_unnorm["pearson"],
-              correlations_unnorm["spearman"],
-              correlations_unnorm["AUROC_top15"],
-              correlations_unnorm["AUROC_top10"],
-              correlations_unnorm["AUROC_top5"])
+        # psnr = compute_psnr(gt_array, pred_array, data_range=gt[i][0].numpy().max() - gt[i][0].numpy().min())
+        # ssim = compute_ssim(gt_array, pred_array, data_range=gt[i][0].numpy().max() - gt[i][0].numpy().min())
+        # mse = np.mean((gt_array - pred_array) ** 2)
+        # correlations_norm = map_correlations_multi_thresholds(unc[i][0].cpu().detach().numpy(), pred_array, gt_array)
+        # correlations_unnorm = map_correlations_multi_thresholds(uncertainty_map[i][0].cpu().detach().numpy(), pred_array, gt_array)
+        uncertainty_summary = summarize_uncertainty(unc_raw)
 
+        """
         csv_writer.writerow({'Sample': step * B + i,
                              'MSE': mse,
                              'PSNR': psnr,
@@ -891,6 +925,17 @@ def run_inference_and_log_v3_clean_unc_integral(  # in this function the uncerta
                              'AUROC_top10_u_unnorm': correlations_unnorm["AUROC_top10"],
                              'AUROC_top5_u_unnorm': correlations_unnorm["AUROC_top5"],
                              })
+        """
+
+        csv_writer.writerow({'Sample': step * B + i,
+                             'MAE': mae,
+                             'u_mean': uncertainty_summary["u_mean"],
+                             'u_p95': uncertainty_summary["u_p95"],
+                             'u_p99': uncertainty_summary["u_p99"],
+                             'u_top1_mean': uncertainty_summary["u_top1_mean"],
+                             'top5_u_mean': uncertainty_summary["u_top5_mean"],
+                             })
+
 
         for j in range(5):
             ax = axes[i][j] if B > 1 else axes[0][j]
@@ -903,13 +948,16 @@ def run_inference_and_log_v3_clean_unc_integral(  # in this function the uncerta
     writer.add_figure("Test/Inference", plt.gcf(), global_step=step)
     plt.close()
 
+
 @torch.no_grad()
-def run_inference_and_log_v3_clean_unc_integral_sparsification(
+def run_inference_and_log_v3_clean_uncertainty_eval(  # in this function the uncertainty is used for iterative refinement without two-forward
         diffusion_model,
         context_encoder,
+        channels,
         dir,
         condition_batch,
         gt_batch,
+        writer,
         step,
         device,
         scheduler,
@@ -932,6 +980,159 @@ def run_inference_and_log_v3_clean_unc_integral_sparsification(
 
     num_steps = len(scheduler.timesteps)
     K = 10  # number of late decision-relevant steps (excluding final)
+    prev_uncertainty_map = None
+    for i, t in enumerate(tqdm(scheduler.timesteps, desc="DDIM Sampling")):
+
+        t_tensor = torch.tensor([t], device=device).long()
+        model_input = torch.cat([x, condition_batch], dim=1)
+
+        # ==================================================
+        # (i == 0): double forward
+        # ==================================================
+        if i == 0:
+            # ---- pass 1: dummy context
+            with autocast(True):
+                dummy_context = torch.zeros((1, 1, 128), device=device)
+                pred_error_1, pred_logvar_1 = diffusion_model(
+                    x=model_input,
+                    timesteps=t_tensor,
+                    context=dummy_context
+                )
+
+            # ---- build uncertainty
+            uncertainty_map = norm_percentile(
+                torch.exp(pred_logvar_1.float())
+            )
+
+            context_vector = context_encoder(uncertainty_map)
+
+            # ---- pass 2: refined
+            with autocast(True):
+                pred_error, pred_logvar = diffusion_model(
+                    x=model_input,
+                    timesteps=t_tensor,
+                    context=context_vector
+                )
+
+        # ==================================================
+        # ALL FOLLOWING STEPS: single forward
+        # ==================================================
+        else:
+            context_vector = context_encoder(prev_uncertainty_map)
+
+            with autocast(True):
+                pred_error, pred_logvar = diffusion_model(
+                    x=model_input,
+                    timesteps=t_tensor,
+                    context=context_vector
+                )
+        # ==================================================
+        # Update uncertainty memory
+        # ==================================================
+        prev_uncertainty_map = norm_percentile(
+            torch.exp(pred_logvar.float())
+        )
+
+        # ==================================================
+        # Accumulate late-step decision-time uncertainty (evaluation only)
+        # ==================================================
+        # Use last K steps, excluding the final step
+        if (num_steps - K - 1) <= i < (num_steps - 1):
+            a_bar = scheduler.alphas_cumprod[t].view(-1, 1, 1, 1)
+
+            var_eps = torch.exp(pred_logvar.float())
+            var_x0_t = (1.0 - a_bar) / (a_bar + 1e-8) * var_eps
+
+            U_x0 += var_x0_t
+            num_valid_steps += 1
+
+        # ==================================================
+        # DDIM update
+        # ==================================================
+        x, _ = scheduler.step(pred_error, t_tensor, x)
+
+        norm_second = norm_percentile(prev_uncertainty_map).cpu()
+
+        # Save each sample's uncertainty as PNG
+        if int(step) == 1:
+            for b in range(B):
+                arr = norm_second[b].squeeze(0).numpy()
+                png_path = os.path.join(dir, f"sample{b}_{step}_t_step{int(t)}_epoch_350.pdf")
+                plt.imsave(png_path, arr, cmap='hot')
+
+    pred_denoised = x
+    # uncertainty_map = torch.exp(uncertainty)
+
+    # Final trajectory-integrated uncertainty map (for metrics only)
+    U_x0 = U_x0 / max(num_valid_steps, 1)
+    uncertainty_map = U_x0
+
+    gt = gt_batch.cpu().detach()
+    pred = pred_denoised.cpu().detach()
+
+
+    ######################
+
+    for i in range(B):
+
+        # Extract arrays
+        gt_array = gt[i][0].numpy()
+        pred_array = pred[i][0].numpy()
+        # Create a mask where gt is not zero
+        mask = gt_array != -1
+
+        # --- Calibration data ---
+        unc_raw = uncertainty_map[i][0].cpu()
+
+
+        ######### Compute metrics #########
+
+        mae = np.mean(np.abs(gt_array[mask] - pred_array[mask]))
+        uncertainty_summary = summarize_uncertainty(unc_raw[mask])
+
+
+        csv_writer.writerow({'Sample': step * B + i,
+                             'MAE': mae,
+                             'u_mean': uncertainty_summary["u_mean"],
+                             'u_p95': uncertainty_summary["u_p95"],
+                             'u_p99': uncertainty_summary["u_p99"],
+                             'u_top1_mean': uncertainty_summary["u_top1_mean"],
+                             'top5_u_mean': uncertainty_summary["u_top5_mean"],
+                             })
+
+    plt.close()
+
+
+@torch.no_grad()
+def run_inference_and_log_v3_clean_unc_integral_sparsification(
+        diffusion_model,
+        context_encoder,
+        dir,
+        condition_batch,
+        k_steps,
+        gt_batch,
+        step,
+        device,
+        scheduler,
+        csv_writer,
+):
+    diffusion_model.eval()
+    B, C, H, W = condition_batch.shape
+
+    scheduler.set_timesteps(50)
+    scheduler.alphas_cumprod = scheduler.alphas_cumprod.to(device)
+    x = torch.randn_like(condition_batch).to(device)
+    condition_batch = condition_batch.to(device)
+    gt_batch = gt_batch.to(device)
+
+    # ==================================================
+    # Trajectory-level uncertainty accumulator (x0 space)
+    # ==================================================
+    U_x0 = torch.zeros((B, 1, H, W), device=device)
+    num_valid_steps = 0
+
+    num_steps = len(scheduler.timesteps)
+    K = k_steps  # number of late decision-relevant steps (excluding final)
     prev_uncertainty_map = None
     for i, t in enumerate(tqdm(scheduler.timesteps, desc="DDIM Sampling")):
 
@@ -1250,6 +1451,143 @@ def run_inference_and_log_v3_clean_unc_integral_ablation(  # no refinement
     writer.add_figure("Test/Inference", plt.gcf(), global_step=step)
     plt.close()
 
+@torch.no_grad()
+def run_inference_and_log_v3_clean_unc_integral_ablation_sparsification(  # no refinement
+        diffusion_model,
+        context_encoder,
+        dir,
+        condition_batch,
+        gt_batch,
+        step,
+        device,
+        scheduler,
+        csv_writer,
+):
+    diffusion_model.eval()
+    B, C, H, W = condition_batch.shape
+
+    scheduler.set_timesteps(50)
+    scheduler.alphas_cumprod = scheduler.alphas_cumprod.to(device)
+    x = torch.randn_like(condition_batch).to(device)
+    condition_batch = condition_batch.to(device)
+    gt_batch = gt_batch.to(device)
+
+    # ==================================================
+    # Trajectory-level uncertainty accumulator (x0 space)
+    # ==================================================
+    U_x0 = torch.zeros((B, 1, H, W), device=device)
+    num_valid_steps = 0
+
+    num_steps = len(scheduler.timesteps)
+    K = 10  # number of late decision-relevant steps (excluding final)
+    prev_uncertainty_map = None
+    for i, t in enumerate(tqdm(scheduler.timesteps, desc="DDIM Sampling")):
+
+        t_tensor = torch.tensor([t], device=device).long()
+        model_input = torch.cat([x, condition_batch], dim=1)
+
+        # ==================================================
+        # (i == 0): double forward
+        # ==================================================
+        if i == 0:
+            # ---- pass 1: dummy context
+            with autocast(True):
+                dummy_context = torch.zeros((1, 1, 128), device=device)
+                pred_error_1, pred_logvar_1 = diffusion_model(
+                    x=model_input,
+                    timesteps=t_tensor,
+                    context=dummy_context
+                )
+
+            # ---- build uncertainty
+            uncertainty_map = torch.zeros_like(pred_logvar_1.float())
+
+            context_vector = context_encoder(uncertainty_map)
+
+            # ---- pass 2: refined
+            with autocast(True):
+                pred_error, pred_logvar = diffusion_model(
+                    x=model_input,
+                    timesteps=t_tensor,
+                    context=context_vector
+                )
+
+        # ==================================================
+        # ALL FOLLOWING STEPS: single forward
+        # ==================================================
+        else:
+
+            context_vector = context_encoder(torch.zeros_like(prev_uncertainty_map))
+
+            with autocast(True):
+                pred_error, pred_logvar = diffusion_model(
+                    x=model_input,
+                    timesteps=t_tensor,
+                    context=context_vector
+                )
+        # ==================================================
+        # Update uncertainty memory
+        # ==================================================
+        prev_uncertainty_map = norm_percentile(
+            torch.exp(pred_logvar.float())
+        )
+
+        # ==================================================
+        # Accumulate late-step decision-time uncertainty (evaluation only)
+        # ==================================================
+        # Use last K steps, excluding the final step
+        if (num_steps - K - 1) <= i < (num_steps - 1):
+            a_bar = scheduler.alphas_cumprod[t].view(-1, 1, 1, 1)
+
+            var_eps = torch.exp(pred_logvar.float())
+            var_x0_t = (1.0 - a_bar) / (a_bar + 1e-8) * var_eps
+
+            U_x0 += var_x0_t
+            num_valid_steps += 1
+
+        # ==================================================
+        # DDIM update
+        # ==================================================
+        x, _ = scheduler.step(pred_error, t_tensor, x)
+
+        norm_second = norm_percentile(prev_uncertainty_map).cpu()
+
+        # Save each sample's uncertainty as PNG
+        if int(step) == 1:
+            for b in range(B):
+                arr = norm_second[b].squeeze(0).numpy()
+                png_path = os.path.join(dir, f"sample{b}_{step}_t_step{int(t)}_epoch_350.png")
+                plt.imsave(png_path, arr, cmap='hot')
+
+    pred_denoised = x
+    # uncertainty_map = torch.exp(uncertainty)
+
+    # Final trajectory-integrated uncertainty map (for metrics only)
+    U_x0 = U_x0 / max(num_valid_steps, 1)
+    uncertainty_map = U_x0
+
+    gt = gt_batch.cpu().detach()
+    pred = pred_denoised.cpu().detach()
+
+    unc_raw =uncertainty_map.cpu().detach()
+    err_raw = abs(pred - gt)
+
+    u = unc_raw.flatten()
+    e = err_raw.flatten()
+
+
+    fractions, curve = sparsification_curve_fast(u, e, max_frac=0.95)
+    rand_curve = random_sparsification_fast(e, fractions)
+    _, curve_oracle = sparsification_curve_fast(e, e, max_frac=0.95)
+
+    for f, c, r, o in zip(fractions, curve, rand_curve, curve_oracle):
+        csv_writer.writerow({
+            'Sample': step * B + i,
+            'Fraction': f,
+            'Error': c,
+            'RandomError': r,
+            'OracleError': o,
+        })
 
 ############### DDPM vanilla ################
 @torch.no_grad()
@@ -1413,6 +1751,45 @@ def run_ddpm_vanilla_inference_and_log_MC_sampling(
     unc = norm_percentile(mc_uncertainty_map).cpu()
     error = norm_percentile(torch.abs(pred - gt))
 
+    ######################
+    if step == 30 or step == 70 or step == 100 or step == 15 or step == 120 or step == 25 or step == 30:
+        # Create figure
+        fig, axes = plt.subplots(1, 5, figsize=(20, 4))
+
+        # ---- LD ----
+        im0 = axes[0].imshow(ld[0,0], cmap="gray")
+        axes[0].set_title("LD")
+        axes[0].axis("off")
+
+        # ---- GT ----
+        im1 = axes[1].imshow(gt[0,0], cmap="gray")
+        axes[1].set_title("GT")
+        axes[1].axis("off")
+
+        # ---- PRED ----
+        im2 = axes[2].imshow(pred[0,0], cmap="gray")
+        axes[2].set_title("Prediction")
+        axes[2].axis("off")
+
+        # ---- UNCERTAINTY (with colorbar) ----
+        im3 = axes[3].imshow(unc[0,0], cmap="jet")
+        axes[3].set_title("Uncertainty")
+        axes[3].axis("off")
+        fig.colorbar(im3, ax=axes[3], fraction=0.046, pad=0.04)
+
+        # ---- ERROR (with colorbar) ----
+        im4 = axes[4].imshow(error[0,0], cmap="jet")
+        axes[4].set_title("Error")
+        axes[4].axis("off")
+        fig.colorbar(im4, ax=axes[4], fraction=0.046, pad=0.04)
+
+        plt.tight_layout()
+
+        # Save as PDF
+        plt.savefig(f"comparison_{step}.pdf", bbox_inches="tight", dpi=300)
+        plt.close()
+    ######################
+
     fig, axes = plt.subplots(nrows=B, ncols=5, figsize=(8, 2.5 * B))
     if B == 1:
         axes = [axes]
@@ -1486,16 +1863,18 @@ def run_ddpm_vanilla_inference_and_log_MC_sampling(
     writer.add_figure("Test/Inference_MC_Dropout", plt.gcf(), global_step=step)
     plt.close()
 
-
+from PIL import Image
 @torch.no_grad()
-def run_ddpm_vanilla_inference_and_log_MC_sampling_sparsification(
+def run_ddpm_vanilla_inference_and_log_MC_sampling_uncertainty_eval(
         diffusion_model,
         condition_batch,
         gt_batch,
+        writer,
         step,
         device,
         scheduler,
         csv_writer,
+        n_sampling,
 ):
     diffusion_model.eval()
     B, C, H, W = condition_batch.shape
@@ -1510,7 +1889,108 @@ def run_ddpm_vanilla_inference_and_log_MC_sampling_sparsification(
     # --------------------------------------------------
     # Monte Carlo sampling parameters
     # --------------------------------------------------
-    S = 8  # number of sampled trajectories (8–16 is standard)
+    S = n_sampling  # number of sampled trajectories (8–16 is standard)
+
+    samples = []
+
+    # --------------------------------------------------
+    # Monte Carlo sampling
+    # --------------------------------------------------
+    for s in range(S):
+        x = torch.randn_like(condition_batch)
+
+        for t in scheduler.timesteps:
+            t_tensor = torch.tensor([t], device=device).long()
+            model_input = torch.cat([x, condition_batch], dim=1)
+
+            pred_noise = diffusion_model(
+                x=model_input,
+                timesteps=t_tensor,
+                context=None
+            )
+
+            x, _ = scheduler.step(pred_noise, t_tensor, x)
+
+        # pred_denoised = x
+        samples.append(x.cpu())
+
+    samples = torch.stack(samples, dim=0)  # (S, B, C, H, W)
+
+    # --------------------------------------------------
+    # Predictive mean and sampling variance
+    # --------------------------------------------------
+    pred_denoised = samples.mean(dim=0)
+    mc_uncertainty_map = samples.var(dim=0, unbiased=False)
+
+    # --------------------------------------------------
+    # Metrics & logging
+    # --------------------------------------------------
+    gt = gt_batch.cpu()
+    pred = pred_denoised.cpu()
+
+
+    for i in range(B):
+        # Extract arrays
+        gt_array = gt[i][0].numpy()
+        pred_array = pred[i][0].numpy()
+        # Create a mask where gt is not zero
+        mask = gt_array != -1
+
+        # --- Calibration data ---
+        unc_raw = mc_uncertainty_map[i][0].cpu()
+        # unc_masked = unc_raw * mask
+        # pred_masked = pred_array * mask
+        ######### Compute metrics #########
+
+        mae = np.mean(np.abs(gt_array[mask] - pred_array[mask]))
+        uncertainty_summary = summarize_uncertainty(unc_raw[mask])
+
+        csv_writer.writerow({'Sample': step * B + i,
+                             'MAE': mae,
+                             'u_mean': uncertainty_summary["u_mean"],
+                             'u_p95': uncertainty_summary["u_p95"],
+                             'u_p99': uncertainty_summary["u_p99"],
+                             'u_top1_mean': uncertainty_summary["u_top1_mean"],
+                             'top5_u_mean': uncertainty_summary["u_top5_mean"],
+                             })
+
+        ######### Salvataggio PNG (stile matplotlib) #########
+        # sample_id = step * B + i
+
+        # 1) mask -> grayscale
+        #plt.imsave(f"{sample_id}_mask.png", mask, cmap='gray')
+
+        # 2) unc_raw -> hot
+        #plt.imsave(f"{sample_id}_unc_raw.png", unc_raw, cmap='hot')
+
+        # 3) unc con maschera -> hot
+        # plt.imsave(f"{sample_id}_unc_masked.png", unc_masked, cmap='hot')
+
+@torch.no_grad()
+def run_ddpm_vanilla_inference_and_log_MC_sampling_sparsification(
+        diffusion_model,
+        condition_batch,
+        gt_batch,
+        step,
+        device,
+        scheduler,
+        csv_writer,
+        n_sampling,
+):
+    diffusion_model.eval()
+    B, C, H, W = condition_batch.shape
+
+    scheduler.set_timesteps(50)
+    scheduler.alphas_cumprod = scheduler.alphas_cumprod.to(device)
+
+    x = torch.randn_like(condition_batch).to(device)
+    condition_batch = condition_batch.to(device)
+    gt_batch = gt_batch.to(device)
+
+    # --------------------------------------------------
+    # Monte Carlo sampling parameters
+    # --------------------------------------------------
+    S = n_sampling  # number of sampled trajectories (8–16 is standard)
 
     samples = []
 
@@ -1798,9 +2278,9 @@ def run_ddpm_aleatoric_inference_and_log_v2_sparsification(
     u = unc_raw.flatten()
     e = err_raw.flatten()
 
-    fractions, curve = sparsification_curve(u, e, max_frac=0.95)
-    rand_curve = random_sparsification(e, fractions)
-    _, curve_oracle = sparsification_curve(e, e, max_frac=0.95)
+    fractions, curve = sparsification_curve_fast(u, e, max_frac=0.95)
+    rand_curve = random_sparsification_fast(e, fractions)
+    _, curve_oracle = sparsification_curve_fast(e, e, max_frac=0.95)
 
     for f, c, r, o in zip(fractions, curve, rand_curve, curve_oracle):
         csv_writer.writerow({

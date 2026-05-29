@@ -29,7 +29,7 @@ class TrainOptions:
         self.gradient_accumulation_steps = 2 if self.batchSize < 2 else 1  # Fix tuple issue
 
         #self.use_cache = True
-        self.task="MRtoCT"
+        self.task="T1motion"
 
         # Dataset parameters (CT/PET)
         self.slice_range = [0, 10000]

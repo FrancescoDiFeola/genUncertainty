@@ -24,8 +24,8 @@ from src.brlp.ND_dataset import PairedImageDataset
 from src.brlp.ldct_hdct_dataset import LDCTHDCTDataset
 from src.brlp.MR_to_CT import  MRCTPaired
 from src.VAE.utils.checkpoints_utils import load_checkpoint
-
-
+from src.brlp.CBCTtoCT_dataset import CBCTCTPaired
+from src.brlp.motionArtifact_dataset import MotionT1Dataset
 
 # -----------------------
 # ✅ Set environment
@@ -292,6 +292,16 @@ if __name__ == '__main__':
         )
         scaling_factor = 9.404202
 
+    elif args.task == "T1motion":
+
+        dataset = MotionT1Dataset(
+            annotation_A='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_A.csv',
+            annotation_B='/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_B.csv',
+            mode="train",
+            motion_range=(0.0, 0.15),
+        )  # test_dataset_lvl_0 = T1T2Dataset(..., mode="test", fixed_motion_level=0.0)
+        scaling_factor = 5.634654
+
     elif args.task == "CS":
         transform = transforms.Compose([
             transforms.Resize((256, 512)),
@@ -340,6 +350,14 @@ if __name__ == '__main__':
     elif args.task == "T1T2_Oasis":
         dataset = Mri2DSlicedataset(args)
         scaling_factor = 7.832608
+
+    elif args.task == "CBCTtoCT":
+
+        dataset = CBCTCTPaired(
+            csv_path= "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/Data/SynthRad2023/Task2/cbct_ct_dataset_train.csv",
+            output_size=256,
+        )
+        scaling_factor=9.744896
 
     train_loader = DataLoader(dataset=dataset,
                               batch_size=args.batch_size,
