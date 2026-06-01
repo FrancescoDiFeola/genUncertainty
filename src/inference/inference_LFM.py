@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from skimage.metrics import peak_signal_noise_ratio as compute_psnr, structural_similarity as compute_ssim
 import torch
 import os
-from src.inference.utils import sparsification_curve_fast, random_sparsification_fast, sparsification_curve, random_sparsification, norm_percentile, collect_calibration_data, map_correlations_multi_thresholds, map_correlations, summarize_uncertainty
+from src.inference.utils import sparsification_curve_fast, random_sparsification_fast, sparsification_curve, random_sparsification, norm_percentile, collect_calibration_data, map_correlations_multi_thresholds, map_correlations, summarize_uncertainty, uncertainty_error_tail_bins_torch
 
 
 ####################### Latent Rectified Flow Matching self-refining #########################
@@ -462,7 +462,7 @@ def run_inference_LFM_self_refining_and_log_uncertainty_eval(
         gt_array = gt[i][0].numpy()
         pred_array = pred[i][0].numpy()
         # Create a mask where gt is not zero
-        # mask = gt_array != 0
+        mask = gt_array != -1
 
         # --- Calibration data ---
         unc_raw = uncertainty_map[i][0].cpu()
@@ -470,8 +470,8 @@ def run_inference_LFM_self_refining_and_log_uncertainty_eval(
 
         ######### Compute metrics #########
 
-        mae = np.mean(np.abs(gt_array - pred_array))
-        uncertainty_summary = summarize_uncertainty(unc_raw)
+        mae = np.mean(np.abs(gt_array[mask] - pred_array[mask]))
+        uncertainty_summary = summarize_uncertainty(unc_raw[mask])
 
 
         csv_writer.writerow({'Sample': step * B + i,
@@ -482,6 +482,221 @@ def run_inference_LFM_self_refining_and_log_uncertainty_eval(
                              'u_top1_mean': uncertainty_summary["u_top1_mean"],
                              'top5_u_mean': uncertainty_summary["u_top5_mean"],
                              })
+
+@torch.no_grad()
+def run_inference_LFM_self_refining_and_log_uncertainty_calibration_tail_bins(
+        diffusion_model,
+        autoencoder,
+        context_encoder,
+        writer,
+        condition_batch,
+        gt_batch,
+        step,
+        device,
+        scheduler,
+        scaling,
+        csv_writer,
+        mc_decode_samples: int = 20,
+        K: int = 10,   # number of late denoising steps used for uncertainty aggregation
+):
+    # ------------------------------------------------------------------
+    # Evaluation mode: no dropout, no batchnorm updates
+    # ------------------------------------------------------------------
+    diffusion_model.eval()
+    autoencoder.eval()
+
+    # ------------------------------------------------------------------
+    # Basic shapes and setup
+    # condition_batch and x live in LATENT space
+    # ------------------------------------------------------------------
+    B, C, H, W = condition_batch.shape
+
+    # ------------------------------------------------------------------
+    # Initial noisy latent z_T ~ N(0, I)
+    # This defines a single deterministic diffusion trajectory
+    # ------------------------------------------------------------------
+    x = torch.randn_like(condition_batch).to(device)
+
+    condition_batch = condition_batch.to(device)
+    gt_batch = gt_batch.to(device)
+    num_steps = len(scheduler.timesteps)
+
+    # ==================================================
+    # Accumulator for decision-time latent uncertainty
+    #
+    # U_z0 will store the SUM of propagated variances
+    # Var(z0 | t) across the last K denoising steps.
+    #
+    # This represents uncertainty of the reverse estimator,
+    # NOT stochasticity of the diffusion process.
+    # ==================================================
+    U_v = torch.zeros_like(x)
+    num_valid_steps = 0
+
+    # ==================================================
+    # DDIM sampling in latent space
+    #
+    # We follow a standard deterministic DDIM trajectory.
+    # Uncertainty is accumulated but NEVER injected into x.
+    # ==================================================
+    all_next_timesteps = torch.cat((scheduler.timesteps[1:],torch.tensor([0], dtype=scheduler.timesteps.dtype, device=scheduler.timesteps.device)))
+    for i, (t, next_t) in enumerate(tqdm(zip(scheduler.timesteps, all_next_timesteps), total = min(len(scheduler.timesteps), len(all_next_timesteps)),)):
+        t_tensor = torch.tensor([t], device=device).long()
+
+        # -----------------------------
+        # 🌀 First Pass: no context (baseline prediction)
+        # -----------------------------
+        model_input = torch.cat([x, condition_batch], dim=1)
+
+        # ==================================================
+        # (i == 0): double forward
+        # ==================================================
+        if i == 0:
+            # ---- pass 1: dummy context
+            with autocast(True):
+                dummy_context = torch.zeros((1, 1, 128), device=device)
+                predicted_velocity_1, pred_logvar_1 = diffusion_model(x=model_input, timesteps=t_tensor, context=dummy_context)
+
+            # ---- build uncertainty
+            uncertainty_map = norm_percentile(
+                torch.exp(pred_logvar_1.float())
+            )
+
+            context_vector = context_encoder(uncertainty_map)
+
+            # ---- pass 2: refined
+            with autocast(True):
+                predicted_velocity, pred_logvar = diffusion_model(
+                    x=model_input,
+                    timesteps=t_tensor,
+                    context=context_vector
+                )
+
+        # ==================================================
+        # ALL FOLLOWING STEPS: single forward
+        # ==================================================
+        else:
+            context_vector = context_encoder(prev_uncertainty_map)
+
+            with autocast(True):
+                predicted_velocity, pred_logvar = diffusion_model(
+                    x=model_input,
+                    timesteps=t_tensor,
+                    context=context_vector
+                )
+        # ==================================================
+        # Update uncertainty memory
+        # ==================================================
+        prev_uncertainty_map = norm_percentile(
+            torch.exp(pred_logvar.float())
+        )
+        # ==================================================
+        # ==================================================
+        # Accumulate late-step decision-time uncertainty
+        # ==================================================
+        if (num_steps - K - 1) <= i < (num_steps - 1):
+
+            # Learned variance of the velocity field
+            var_v_t = torch.exp(pred_logvar.float())
+
+            # Optional: weight by dt^2 (commented out by default)
+            # dt = 1.0 / scheduler.num_inference_steps
+            # var_v_t = (dt ** 2) * var_v_t
+
+            U_v += var_v_t
+            num_valid_steps += 1
+
+        # ==================================================
+        # Deterministic DDIM update
+        #
+        # Note: uncertainty does NOT affect the trajectory.
+        # ==================================================
+        x, _ = scheduler.step(predicted_velocity,  t, x, next_t)
+
+    # ======================================================
+    # Final latent mean and aggregated uncertainty
+    #
+    # pred_denoised_latent is the mean prediction μ_z0
+    # ======================================================
+    pred_denoised_latent = x
+
+    # --------------------------------------------------
+    # Average accumulated variance across K steps
+    # --------------------------------------------------
+    var_v = U_v / max(num_valid_steps, 1)
+
+    # --------------------------------------------------
+    # Convert variance to standard deviation
+    #
+    # Required because we will SAMPLE latent perturbations.
+    # --------------------------------------------------
+    sigma_z0 = torch.sqrt(var_v.clamp_min(1e-12))
+
+    # ==================================================
+    # Decode the latent mean to pixel space
+    #
+    # This is the final reconstructed image.
+    # ==================================================
+    pred_denoised = autoencoder.decode(pred_denoised_latent / scaling)
+    condition_dec = autoencoder.decode(condition_batch / scaling)
+
+    # ==================================================
+    # Monte Carlo decoding of learned uncertainty
+    #
+    # This approximates propagation through the decoder
+    # Jacobian without explicitly computing it.
+    #
+    # z0^(s) = μ_z0 + σ_z0 ⊙ ε_s
+    # x^(s)  = D(z0^(s))
+    # ==================================================
+    decoded_samples = []
+    for _ in range(mc_decode_samples):
+        eps = torch.randn_like(pred_denoised_latent)
+        z0_s = pred_denoised_latent + sigma_z0 *eps
+        x_s = autoencoder.decode(z0_s / scaling)
+        decoded_samples.append(x_s)
+
+    decoded_samples = torch.stack(decoded_samples, dim=0)
+
+    # --------------------------------------------------
+    # Pixel-space uncertainty = variance of decoded samples
+    # --------------------------------------------------
+    uncertainty_map = decoded_samples.var(dim=0, unbiased=False)
+
+    # ==================================================
+    # Metrics & logging
+    #
+    # Uncertainty is evaluated ONLY here, not during
+    # generation or decoding.
+    # ==================================================
+    ld = condition_dec.cpu().detach()
+    #####
+    # gt_z = autoencoder.encode(gt_batch)
+    # gt = autoencoder.decode(gt_z)
+    # gt = gt.cpu().detach()
+    #####
+    gt = gt_batch.cpu().detach()
+    pred = pred_denoised.cpu().detach()
+
+    for i in range(B):
+        sample_id = step * B + i
+        gt_i = gt[i, 0]
+        pred_i = pred[i, 0]
+        unc_i = uncertainty_map[i, 0].cpu()
+        # Foreground / valid mask already used in previous analyses
+        # Here we assume that pixels with gt == -1 are background.
+        # mask = gt_i != -1
+        err_i = torch.abs(gt_i - pred_i)
+        # unc_roi = unc_i[mask]
+        # err_roi = err_i[mask]
+        rows = uncertainty_error_tail_bins_torch(
+            uncertainty=unc_i,
+            error=err_i,
+            sample_id=sample_id,
+            percentiles=(0, 50, 75, 90, 95, 99, 100),
+        )
+        for row in rows:
+            csv_writer.writerow(row)
 
 
 @torch.no_grad()
@@ -1243,6 +1458,96 @@ def run_inference_LFM_vanilla_and_log_MC_sampling_uncertainty_eval(
                              'u_top1_mean': uncertainty_summary["u_top1_mean"],
                              'top5_u_mean': uncertainty_summary["u_top5_mean"],
                              })
+
+    plt.close()
+
+
+@torch.no_grad()
+def run_inference_LFM_vanilla_and_log_MC_sampling_uncertainty_calibration_tail_bins(
+        diffusion_model,
+        autoencoder,
+        condition_batch,
+        gt_batch,
+        writer,
+        step,
+        device,
+        scheduler,
+        scaling,
+        csv_writer,
+        n_sampling,
+):
+    diffusion_model.eval()
+    B, C, H, W = condition_batch.shape
+
+
+    x = torch.randn_like(condition_batch).to(device)
+    condition_batch = condition_batch.to(device)
+    gt_batch = gt_batch.to(device)
+
+    # --------------------------------------------------
+    # Monte Carlo sampling parameters
+    # --------------------------------------------------
+    S = n_sampling  # number of sampled trajectories (8–16 is standard)
+
+    samples = []
+
+    # --------------------------------------------------
+    # Monte Carlo sampling
+    # --------------------------------------------------
+    for s in range(S):
+        x = torch.randn_like(condition_batch)
+        all_next_timesteps = torch.cat((scheduler.timesteps[1:], torch.tensor([0], dtype=scheduler.timesteps.dtype, device=scheduler.timesteps.device)))
+        for i, (t, next_t) in enumerate(tqdm(zip(scheduler.timesteps, all_next_timesteps), total=min(len(scheduler.timesteps), len(all_next_timesteps)), )):
+            t_tensor = torch.tensor([t], device=device).long()
+            model_input = torch.cat([x, condition_batch], dim=1)
+
+            predicted_velocity = diffusion_model(
+                x=model_input,
+                timesteps=t_tensor,
+                context=None
+            )
+
+            x, _ = scheduler.step(predicted_velocity,  t, x, next_t)
+
+        # pred_denoised = x
+        x = autoencoder.decode(x / scaling)
+        samples.append(x.cpu())
+
+    samples = torch.stack(samples, dim=0)  # (S, B, C, H, W)
+
+    # --------------------------------------------------
+    # Predictive mean and sampling variance
+    # --------------------------------------------------
+    pred_denoised = samples.mean(dim=0)
+    mc_uncertainty_map = samples.var(dim=0, unbiased=False)
+
+
+    # --------------------------------------------------
+    # Metrics & logging
+    # --------------------------------------------------
+    gt = gt_batch.cpu()
+    pred = pred_denoised.cpu()
+
+
+    for i in range(B):
+        sample_id = step * B + i
+        gt_i = gt[i, 0]
+        pred_i = pred[i, 0]
+        unc_i = mc_uncertainty_map[i, 0]
+        # Foreground / valid mask already used in previous analyses
+        # Here we assume that pixels with gt == -1 are background.
+        # mask = gt_i != -1
+        err_i = torch.abs(gt_i - pred_i)
+        # unc_roi = unc_i[mask]
+        # err_roi = err_i[mask]
+        rows = uncertainty_error_tail_bins_torch(
+            uncertainty=unc_i,
+            error=err_i,
+            sample_id=sample_id,
+            percentiles=(0, 50, 75, 90, 95, 99, 100),
+        )
+        for row in rows:
+            csv_writer.writerow(row)
 
     plt.close()
 

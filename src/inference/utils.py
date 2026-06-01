@@ -61,6 +61,14 @@ def initialize_writers(
 
         return (csvfile, writer)
 
+    elif writer_type == "uncertainty_cal":
+        csvfile= open(csv_path, mode='w', newline='')
+        fieldnames = ["sample", "bin", "p_low", "p_high", "mean_uncertainty", "mean_error", "count"]
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+
+        return (csvfile, writer)
+
     elif writer_type == "calibration":
 
         csvfile_2 = open(csv_path_2, mode='w', newline='')
@@ -166,6 +174,38 @@ def sparsification_curve_fast(u, e, num_steps=50, max_frac=0.99, normalize=True)
         curve /= (curve[0] + 1e-12)
 
     return fractions, curve
+
+def uncertainty_error_tail_bins_torch(
+    uncertainty,
+    error,
+    sample_id,
+    percentiles=(0, 50, 75, 90, 95, 99, 100),
+):
+    u = np.asarray(uncertainty).reshape(-1)
+    e = np.asarray(error).reshape(-1)
+    valid = np.isfinite(u) & np.isfinite(e)
+    u = u[valid]
+    e = e[valid]
+    edges = np.percentile(u, percentiles)
+    rows = []
+    for b in range(len(edges) - 1):
+        if b == len(edges) - 2:
+            idx = (u >= edges[b]) & (u <= edges[b + 1])
+        else:
+            idx = (u >= edges[b]) & (u < edges[b + 1])
+        n = int(idx.sum())
+        if n == 0:
+            continue
+        rows.append({
+            "sample": sample_id,
+            "bin": b,
+            "p_low": percentiles[b],
+            "p_high": percentiles[b + 1],
+            "mean_uncertainty": float(u[idx].mean()),
+            "mean_error": float(e[idx].mean()),
+            "count": n,
+        })
+    return rows
 
 def random_sparsification_fast(e, fractions, trials=20, normalize=True):
     """

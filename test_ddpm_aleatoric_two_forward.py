@@ -201,6 +201,9 @@ if __name__ == '__main__':
         csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_uncertainty_eval_{args.motion_level}.csv")
         writer_csv = initialize_writers(csv_path, writer_type=args.analysis)[1]
 
+    elif args.analysis == "uncertainty_cal":
+        csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_uncertainty_cal_{args.motion_level}.csv")
+        writer_csv = initialize_writers(csv_path, writer_type=args.analysis)[1]
     # c = 0
     for step, batch in enumerate(loader):
 
@@ -276,6 +279,20 @@ if __name__ == '__main__':
 
         elif args.analysis == "uncertainty_eval":
             run_inference_and_log_v3_clean_uncertainty_eval(
+                diffusion_model=diffusion,
+                context_encoder=spatial_encoder,
+                channels=args.spatial_enc_channels,
+                dir=experiment_dir,
+                condition_batch=batch['A'],
+                gt_batch=batch['B'],
+                writer=writer,
+                step=step,
+                device=DEVICE,
+                scheduler=scheduler,
+                csv_writer=writer_csv,
+            )
+        elif args.analysis == "uncertainty_cal":
+            run_inference_and_log_v3_clean_uncertainty_calibration_tail_bins(
                 diffusion_model=diffusion,
                 context_encoder=spatial_encoder,
                 channels=args.spatial_enc_channels,

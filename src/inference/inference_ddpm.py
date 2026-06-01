@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from skimage.metrics import peak_signal_noise_ratio as compute_psnr, structural_similarity as compute_ssim
 import torch
 import os
-from src.inference.utils import sparsification_curve_fast, random_sparsification_fast, norm_percentile, collect_calibration_data, map_correlations_multi_thresholds, summarize_uncertainty
+from src.inference.utils import sparsification_curve_fast, random_sparsification_fast, norm_percentile, collect_calibration_data, map_correlations_multi_thresholds, summarize_uncertainty, uncertainty_error_tail_bins_torch
 
 ############### DDPM self-refining ####################
 @torch.no_grad()
@@ -1102,6 +1102,149 @@ def run_inference_and_log_v3_clean_uncertainty_eval(  # in this function the unc
 
     plt.close()
 
+@torch.no_grad()
+def run_inference_and_log_v3_clean_uncertainty_calibration_tail_bins(  # in this function the uncertainty is used for iterative refinement without two-forward
+        diffusion_model,
+        context_encoder,
+        channels,
+        dir,
+        condition_batch,
+        gt_batch,
+        writer,
+        step,
+        device,
+        scheduler,
+        csv_writer,
+):
+    diffusion_model.eval()
+    B, C, H, W = condition_batch.shape
+
+    scheduler.set_timesteps(50)
+    scheduler.alphas_cumprod = scheduler.alphas_cumprod.to(device)
+    x = torch.randn_like(condition_batch).to(device)
+    condition_batch = condition_batch.to(device)
+    gt_batch = gt_batch.to(device)
+
+    # ==================================================
+    # Trajectory-level uncertainty accumulator (x0 space)
+    # ==================================================
+    U_x0 = torch.zeros((B, 1, H, W), device=device)
+    num_valid_steps = 0
+
+    num_steps = len(scheduler.timesteps)
+    K = 10  # number of late decision-relevant steps (excluding final)
+    prev_uncertainty_map = None
+    for i, t in enumerate(tqdm(scheduler.timesteps, desc="DDIM Sampling")):
+
+        t_tensor = torch.tensor([t], device=device).long()
+        model_input = torch.cat([x, condition_batch], dim=1)
+
+        # ==================================================
+        # (i == 0): double forward
+        # ==================================================
+        if i == 0:
+            # ---- pass 1: dummy context
+            with autocast(True):
+                dummy_context = torch.zeros((1, 1, 128), device=device)
+                pred_error_1, pred_logvar_1 = diffusion_model(
+                    x=model_input,
+                    timesteps=t_tensor,
+                    context=dummy_context
+                )
+
+            # ---- build uncertainty
+            uncertainty_map = norm_percentile(
+                torch.exp(pred_logvar_1.float())
+            )
+
+            context_vector = context_encoder(uncertainty_map)
+
+            # ---- pass 2: refined
+            with autocast(True):
+                pred_error, pred_logvar = diffusion_model(
+                    x=model_input,
+                    timesteps=t_tensor,
+                    context=context_vector
+                )
+
+        # ==================================================
+        # ALL FOLLOWING STEPS: single forward
+        # ==================================================
+        else:
+            context_vector = context_encoder(prev_uncertainty_map)
+
+            with autocast(True):
+                pred_error, pred_logvar = diffusion_model(
+                    x=model_input,
+                    timesteps=t_tensor,
+                    context=context_vector
+                )
+        # ==================================================
+        # Update uncertainty memory
+        # ==================================================
+        prev_uncertainty_map = norm_percentile(
+            torch.exp(pred_logvar.float())
+        )
+
+        # ==================================================
+        # Accumulate late-step decision-time uncertainty (evaluation only)
+        # ==================================================
+        # Use last K steps, excluding the final step
+        if (num_steps - K - 1) <= i < (num_steps - 1):
+            a_bar = scheduler.alphas_cumprod[t].view(-1, 1, 1, 1)
+
+            var_eps = torch.exp(pred_logvar.float())
+            var_x0_t = (1.0 - a_bar) / (a_bar + 1e-8) * var_eps
+
+            U_x0 += var_x0_t
+            num_valid_steps += 1
+
+        # ==================================================
+        # DDIM update
+        # ==================================================
+        x, _ = scheduler.step(pred_error, t_tensor, x)
+
+        norm_second = norm_percentile(prev_uncertainty_map).cpu()
+
+        # Save each sample's uncertainty as PNG
+        if int(step) == 1:
+            for b in range(B):
+                arr = norm_second[b].squeeze(0).numpy()
+                png_path = os.path.join(dir, f"sample{b}_{step}_t_step{int(t)}_epoch_350.pdf")
+                plt.imsave(png_path, arr, cmap='hot')
+
+    pred_denoised = x
+    # uncertainty_map = torch.exp(uncertainty)
+
+    # Final trajectory-integrated uncertainty map (for metrics only)
+    U_x0 = U_x0 / max(num_valid_steps, 1)
+    uncertainty_map = U_x0
+
+    gt = gt_batch.cpu().detach()
+    pred = pred_denoised.cpu().detach()
+
+
+    ######################
+
+    for i in range(B):
+        sample_id = step * B + i
+        gt_i = gt[i, 0]
+        pred_i = pred[i, 0]
+        unc_i = uncertainty_map[i, 0].cpu()
+        # Foreground / valid mask already used in previous analyses
+        # Here we assume that pixels with gt == -1 are background.
+        # mask = gt_i != -1
+        err_i = torch.abs(gt_i - pred_i)
+        # unc_roi = unc_i[mask]
+        # err_roi = err_i[mask]
+        rows = uncertainty_error_tail_bins_torch(
+            uncertainty=unc_i,
+            error=err_i,
+            sample_id=sample_id,
+            percentiles=(0, 50, 75, 90, 95, 99, 100),
+        )
+        for row in rows:
+            csv_writer.writerow(row)
 
 @torch.no_grad()
 def run_inference_and_log_v3_clean_unc_integral_sparsification(
@@ -1965,6 +2108,95 @@ def run_ddpm_vanilla_inference_and_log_MC_sampling_uncertainty_eval(
 
         # 3) unc con maschera -> hot
         # plt.imsave(f"{sample_id}_unc_masked.png", unc_masked, cmap='hot')
+
+from PIL import Image
+@torch.no_grad()
+def run_ddpm_vanilla_inference_and_log_MC_sampling_uncertainty_calibration_tail_bins(
+        diffusion_model,
+        condition_batch,
+        gt_batch,
+        writer,
+        step,
+        device,
+        scheduler,
+        csv_writer,
+        n_sampling,
+):
+    diffusion_model.eval()
+    B, C, H, W = condition_batch.shape
+
+    scheduler.set_timesteps(50)
+    scheduler.alphas_cumprod = scheduler.alphas_cumprod.to(device)
+
+    x = torch.randn_like(condition_batch).to(device)
+    condition_batch = condition_batch.to(device)
+    gt_batch = gt_batch.to(device)
+
+    # --------------------------------------------------
+    # Monte Carlo sampling parameters
+    # --------------------------------------------------
+    S = n_sampling  # number of sampled trajectories (8–16 is standard)
+
+    samples = []
+
+    # --------------------------------------------------
+    # Monte Carlo sampling
+    # --------------------------------------------------
+    for s in range(S):
+        x = torch.randn_like(condition_batch)
+
+        for t in scheduler.timesteps:
+            t_tensor = torch.tensor([t], device=device).long()
+            model_input = torch.cat([x, condition_batch], dim=1)
+
+            pred_noise = diffusion_model(
+                x=model_input,
+                timesteps=t_tensor,
+                context=None
+            )
+
+            x, _ = scheduler.step(pred_noise, t_tensor, x)
+
+        # pred_denoised = x
+        samples.append(x.cpu())
+
+    samples = torch.stack(samples, dim=0)  # (S, B, C, H, W)
+
+    # --------------------------------------------------
+    # Predictive mean and sampling variance
+    # --------------------------------------------------
+    pred_denoised = samples.mean(dim=0)
+    mc_uncertainty_map = samples.var(dim=0, unbiased=False)
+
+    # --------------------------------------------------
+    # Metrics & logging
+    # --------------------------------------------------
+    gt = gt_batch.cpu()
+    pred = pred_denoised.cpu()
+
+    for i in range(B):
+
+        sample_id = step * B + i
+        gt_i = gt[i, 0]
+        pred_i = pred[i, 0]
+        unc_i = mc_uncertainty_map[i, 0]
+
+        # Foreground / valid mask already used in previous analyses
+        # Here we assume that pixels with gt == -1 are background.
+        # mask = gt_i != -1
+
+        err_i = torch.abs(gt_i - pred_i)
+        # unc_roi = unc_i[mask]
+        # err_roi = err_i[mask]
+        rows = uncertainty_error_tail_bins_torch(
+            uncertainty=unc_i,
+            error=err_i,
+            sample_id=sample_id,
+            percentiles=(0, 50, 75, 90, 95, 99, 100),
+        )
+
+        for row in rows:
+            csv_writer.writerow(row)
 
 @torch.no_grad()
 def run_ddpm_vanilla_inference_and_log_MC_sampling_sparsification(

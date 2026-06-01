@@ -1118,7 +1118,9 @@ import matplotlib.pyplot as plt
 from sklearn.isotonic import IsotonicRegression
 from scipy.stats import spearmanr, pearsonr
 
-root = "/Users/francescodifeola/Desktop/omega/uncertainty/results/T1T2/uncertainty_eval/DM"
+root = "/Users/francescodifeola/Desktop/omega/uncertainty/results/T1_motion/uncertainty_eval/FM_007"
+
+n = 8
 FILES = {
 
     "TRUST": f"{root}/_TRUST.csv",
@@ -1244,12 +1246,12 @@ for ax, (method, (x, y)) in zip(axes, data.items()):
         rasterized=True,
     )
 
-    ax.plot(
-        x_fit,
-        y_fit,
-        linewidth=2.4,
-        label="isotonic fit",
-    )
+    # ax.plot(
+    #    x_fit,
+    #     y_fit,
+    #    linewidth=2.4,
+    #    label="isotonic fit",
+    # )
 
     ax.set_title(f"{method}\nSpearman $\\rho={rho:.3f}$")
     ax.set_xlabel("Mean predicted uncertainty")
@@ -1259,9 +1261,488 @@ axes[0].set_ylabel("Mean absolute error")
 axes[0].legend(frameon=False, loc="upper left")
 
 fig.tight_layout()
-fig.savefig(f"{root}/{OUT_PREFIX}.pdf", bbox_inches="tight")
-fig.savefig(f"{root}/{OUT_PREFIX}.png", dpi=300, bbox_inches="tight")
+fig.savefig(f"{root}/{OUT_PREFIX}_N_{n}.pdf", bbox_inches="tight")
+fig.savefig(f"{root}/{OUT_PREFIX}_N_{n}.png", dpi=300, bbox_inches="tight")
 
 print(f"Saved: {OUT_PREFIX}.pdf")
 print(f"Saved: {OUT_PREFIX}.png")
 print(f"Saved: {OUT_PREFIX}_correlations.csv")
+
+
+########
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.stats import spearmanr
+
+CSV_PATH = "/Users/francescodifeola/Desktop/metrics_epoch_140_uncertainty_calibration_k_10.csv"
+OUT_PREFIX = "calibration_curve"
+
+df = pd.read_csv(CSV_PATH)
+df = df[df["Type"] == "calibration"].copy()
+
+# Weighted aggregation across samples
+g = (
+    df.groupby("Bin")
+    .apply(lambda x: pd.Series({
+        "Unc_mean": np.average(x["Unc_mean"], weights=x["Count"]),
+        "Err_mean": np.average(x["Err_mean"], weights=x["Count"]),
+        "Err_std": x["Err_mean"].std(),
+        "Err_sem": x["Err_mean"].std() / np.sqrt(len(x)),
+        "Count": x["Count"].sum()
+    }))
+    .reset_index()
+)
+
+# rho, p = spearmanr(g["Unc_mean"], g["Err_mean"])
+
+plt.rcParams.update({
+    "font.family": "serif",
+    "font.size": 11,
+    "axes.labelsize": 12,
+    "axes.titlesize": 12,
+    "legend.fontsize": 10,
+})
+
+fig, ax = plt.subplots(figsize=(4.6, 3.3))
+
+ax.errorbar(
+    g["Unc_mean"],
+    g["Err_mean"],
+    yerr=g["Err_std"],
+    marker="o",
+    linewidth=2,
+    capsize=3,
+)
+
+ax.set_xlabel("Mean predicted uncertainty")
+ax.set_ylabel("Mean absolute error")
+ax.set_xscale("log")
+# ax.set_title(rf"Uncertainty-error alignment, Spearman $\rho={rho:.3f}$")
+ax.grid(True, linestyle="--", linewidth=0.6, alpha=0.5)
+
+fig.tight_layout()
+fig.savefig(f"/Users/francescodifeola/Desktop/{OUT_PREFIX}.pdf", bbox_inches="tight")
+fig.savefig(f"/Users/francescodifeola/Desktop/{OUT_PREFIX}.png", dpi=300, bbox_inches="tight")
+
+g.to_csv(f"{OUT_PREFIX}_binned.csv", index=False)
+
+####################
+import pandas as pd
+
+import numpy as np
+
+import matplotlib.pyplot as plt
+
+TRUST_CSV = "/Users/francescodifeola/Desktop/omega/uncertainty/results/T1T2/uncertainty_cal/FM/_TRUST.csv"
+POSTHOC_CSV = "/Users/francescodifeola/Desktop/omega/uncertainty/results/T1T2/uncertainty_cal/FM/_PostHoc_N_8.csv"
+
+OUT_PREFIX = "uncertainty_error_tail_bins_comparison"
+
+OUT_DIR = "/Users/francescodifeola/Desktop/omega/uncertainty/results/T1T2/uncertainty_cal/FM"
+
+def aggregate_tail_bins(csv_path):
+    df = pd.read_csv(csv_path)
+    g = (
+        df.groupby(["bin", "p_low", "p_high"])
+        .apply(lambda x: pd.Series({
+            "mean_uncertainty": np.average(x["mean_uncertainty"], weights=x["count"]),
+            "mean_error": np.average(x["mean_error"], weights=x["count"]),
+            "std_error": x["mean_error"].std(),
+            "sem_error": x["mean_error"].std() / np.sqrt(len(x)),
+            "count": x["count"].sum(),
+        }))
+        .reset_index()
+    )
+    return g
+g_trust = aggregate_tail_bins(TRUST_CSV)
+g_posthoc = aggregate_tail_bins(POSTHOC_CSV)
+plt.rcParams.update({
+    "font.family": "serif",
+    "font.size": 11,
+    "axes.labelsize": 12,
+    "axes.titlesize": 12,
+    "legend.fontsize": 10,
+})
+
+fig, ax = plt.subplots(figsize=(4.8, 3.4))
+ax.errorbar(
+    g_trust["mean_uncertainty"],
+    g_trust["mean_error"],
+    yerr=g_trust["std_error"],
+    marker="o",
+    linewidth=2.0,
+    capsize=3,
+    label="TRUST",
+)
+ax.errorbar(
+    g_posthoc["mean_uncertainty"],
+    g_posthoc["mean_error"],
+    yerr=g_posthoc["std_error"],
+    marker="s",
+    linewidth=2.0,
+    capsize=3,
+    label="Post-hoc sampling",
+)
+
+# Optional: annotate percentile bins only once, using TRUST positions
+# for _, r in g_trust.iterrows():
+#    ax.annotate(
+#        f"{int(r['p_low'])}-{int(r['p_high'])}%",
+#        (r["mean_uncertainty"], r["mean_error"]),
+#        textcoords="offset points",
+#        xytext=(4, 4),
+#       fontsize=8,
+#    )
+ax.set_xlabel("Mean predicted uncertainty")
+ax.set_ylabel("Mean absolute error")
+ax.grid(True, linestyle="--", linewidth=0.6, alpha=0.5)
+ax.legend(frameon=False)
+fig.tight_layout()
+fig.savefig(f"{OUT_DIR}/{OUT_PREFIX}.pdf", bbox_inches="tight")
+fig.savefig(f"{OUT_DIR}/{OUT_PREFIX}.png", dpi=300, bbox_inches="tight")
+g_trust.to_csv(f"{OUT_DIR}/{OUT_PREFIX}_TRUST_aggregated.csv", index=False)
+g_posthoc.to_csv(f"{OUT_DIR}/{OUT_PREFIX}_PostHoc_aggregated.csv", index=False)
+print("TRUST")
+print(g_trust)
+print("\nPost-hoc sampling")
+print(g_posthoc)
+#######
+import os
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+MODEL = "LFM_02"  # DM, FM, LDM, LFM
+
+BASE_DIR = f"/Users/francescodifeola/Desktop/omega/uncertainty/results/T1_motion/uncertainty_cal/{MODEL}"
+
+TRUST_CSV = os.path.join(BASE_DIR, "_TRUST.csv")
+POSTHOC_CSV = os.path.join(BASE_DIR, "_PostHoc_N_8.csv")
+
+OUT_PREFIX = f"uncertainty_error_relative_{MODEL}"
+
+
+def aggregate_tail_bins(csv_path):
+
+    df = pd.read_csv(csv_path)
+
+    g = (
+        df.groupby(["bin", "p_low", "p_high"])
+        .apply(lambda x: pd.Series({
+            "mean_uncertainty": np.average(
+                x["mean_uncertainty"],
+                weights=x["count"]
+            ),
+            "mean_error": np.average(
+                x["mean_error"],
+                weights=x["count"]
+            ),
+            "std_error": x["mean_error"].std(),
+            "sem_error": x["mean_error"].std() / np.sqrt(len(x)),
+            "count": x["count"].sum(),
+        }))
+        .reset_index()
+        .sort_values("bin")
+    )
+
+    return g
+
+
+def add_relative_uncertainty(g):
+
+    g = g.copy()
+
+    g["relative_uncertainty"] = (
+        g["mean_uncertainty"]
+        /
+        (g["mean_uncertainty"].max() + 1e-12)
+    )
+
+    return g
+
+
+g_trust = aggregate_tail_bins(TRUST_CSV)
+g_posthoc = aggregate_tail_bins(POSTHOC_CSV)
+
+g_trust = add_relative_uncertainty(g_trust)
+g_posthoc = add_relative_uncertainty(g_posthoc)
+
+plt.rcParams.update({
+    "font.family": "serif",
+    "font.size": 11,
+    "axes.labelsize": 12,
+    "axes.titlesize": 12,
+    "legend.fontsize": 10,
+})
+
+fig, ax = plt.subplots(figsize=(4.8, 3.4))
+
+# --------------------------------------------------
+# TRUST
+# --------------------------------------------------
+
+ax.plot(
+    g_trust["relative_uncertainty"],
+    g_trust["mean_error"],
+    marker="o",
+    markersize=8,
+    linewidth=2.5,
+    color="orange",
+    label="TRUST",
+)
+
+# --------------------------------------------------
+# Post-hoc
+# --------------------------------------------------
+
+ax.plot(
+    g_posthoc["relative_uncertainty"],
+    g_posthoc["mean_error"],
+    marker="s",
+    markersize=8,
+    linewidth=2.5,
+    color="blue",
+    label="Post-hoc sampling",
+)
+
+# --------------------------------------------------
+# Formatting
+# --------------------------------------------------
+
+ax.set_xlabel("Relative predicted uncertainty")
+ax.set_ylabel(r"$|y-\hat{y}|$")
+
+ax.grid(
+    False,
+    linestyle="--",
+    linewidth=0.6,
+    alpha=0.5,
+)
+
+# ax.legend(frameon=False)
+fig.tight_layout()
+
+fig.savefig(
+    os.path.join(BASE_DIR, f"{OUT_PREFIX}.pdf"),
+    bbox_inches="tight",
+)
+
+fig.savefig(
+    os.path.join(BASE_DIR, f"{OUT_PREFIX}.png"),
+    dpi=300,
+    bbox_inches="tight",
+)
+
+print("TRUST")
+print(g_trust)
+
+print("\nPost-hoc sampling")
+print(g_posthoc)
+
+
+######
+import pandas as pd
+
+import numpy as np
+
+import matplotlib.pyplot as plt
+
+TRUST_CSV = "/Users/francescodifeola/Desktop/omega/uncertainty/results/T1T2/uncertainty_cal/FM/_TRUST.csv"
+
+POSTHOC_CSVS = {
+
+    4: "/Users/francescodifeola/Desktop/omega/uncertainty/results/T1T2/uncertainty_cal/FM/_PostHoc_N_4.csv",
+
+    5: "/Users/francescodifeola/Desktop/omega/uncertainty/results/T1T2/uncertainty_cal/FM/_PostHoc_N_5.csv",
+
+    6: "/Users/francescodifeola/Desktop/omega/uncertainty/results/T1T2/uncertainty_cal/FM/_PostHoc_N_6.csv",
+
+    7: "/Users/francescodifeola/Desktop/omega/uncertainty/results/T1T2/uncertainty_cal/FM/_PostHoc_N_7.csv",
+
+    8: "/Users/francescodifeola/Desktop/omega/uncertainty/results/T1T2/uncertainty_cal/FM/_PostHoc_N_8.csv",
+
+}
+
+OUT_PREFIX = "uncertainty_error_tail_bins_allN"
+
+OUT_DIR = "/Users/francescodifeola/Desktop/omega/uncertainty/results/T1T2/uncertainty_cal/FM"
+
+def aggregate_tail_bins(csv_path):
+
+    df = pd.read_csv(csv_path)
+
+    g = (
+
+        df.groupby(["bin", "p_low", "p_high"])
+
+        .apply(lambda x: pd.Series({
+
+            "mean_uncertainty": np.average(
+
+                x["mean_uncertainty"],
+
+                weights=x["count"]
+
+            ),
+
+            "mean_error": np.average(
+
+                x["mean_error"],
+
+                weights=x["count"]
+
+            ),
+
+            "std_error": x["mean_error"].std(),
+
+            "sem_error": x["mean_error"].std() / np.sqrt(len(x)),
+
+            "count": x["count"].sum(),
+
+        }))
+
+        .reset_index()
+
+    )
+
+    return g
+
+plt.rcParams.update({
+
+    "font.family": "serif",
+
+    "font.size": 11,
+
+    "axes.labelsize": 12,
+
+    "axes.titlesize": 12,
+
+    "legend.fontsize": 9,
+
+})
+
+fig, ax = plt.subplots(figsize=(5.2, 3.8))
+
+# ==================================================
+
+# TRUST
+
+# ==================================================
+
+g_trust = aggregate_tail_bins(TRUST_CSV)
+
+ax.errorbar(
+
+    g_trust["mean_uncertainty"],
+
+    g_trust["mean_error"],
+
+    #yerr=g_trust["std_error"],
+
+    marker="o",
+
+    linewidth=3.0,
+
+    capsize=3,
+
+    label="TRUST",
+
+)
+
+g_trust.to_csv(
+
+    f"{OUT_DIR}/{OUT_PREFIX}_TRUST_aggregated.csv",
+
+    index=False
+
+)
+
+# ==================================================
+
+# Post-hoc curves
+
+# ==================================================
+
+markers = ["s", "^", "v", "D", "P"]
+
+for marker, (N, csv_path) in zip(markers, POSTHOC_CSVS.items()):
+
+    g = aggregate_tail_bins(csv_path)
+
+    ax.plot(
+
+        g["mean_uncertainty"],
+
+        g["mean_error"],
+
+        marker=marker,
+
+        linewidth=1.5,
+
+        alpha=0.85,
+
+        label=rf"Post-hoc ($N={N}$)",
+
+    )
+
+    g.to_csv(
+
+        f"{OUT_DIR}/{OUT_PREFIX}_PostHoc_N_{N}_aggregated.csv",
+
+        index=False
+
+    )
+
+# ==================================================
+
+# Formatting
+
+# ==================================================
+
+ax.set_xlabel("Mean predicted uncertainty")
+
+ax.set_ylabel("Mean absolute error")
+
+ax.grid(
+
+    True,
+
+    linestyle="--",
+
+    linewidth=0.6,
+
+    alpha=0.5
+
+)
+
+ax.legend(
+
+    frameon=False,
+
+    ncol=2
+
+)
+
+fig.tight_layout()
+
+fig.savefig(
+
+    f"{OUT_DIR}/{OUT_PREFIX}.pdf",
+
+    bbox_inches="tight"
+
+)
+
+fig.savefig(
+
+    f"{OUT_DIR}/{OUT_PREFIX}.png",
+
+    dpi=300,
+
+    bbox_inches="tight"
+
+)
+
+print("Saved figure.")
+

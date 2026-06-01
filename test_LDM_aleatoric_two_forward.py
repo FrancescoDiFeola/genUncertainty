@@ -211,6 +211,10 @@ if __name__ == '__main__':
         csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_uncertainty_eval_{args.motion_level}.csv")
         writer_csv = initialize_writers(csv_path, writer_type=args.analysis)[1]
 
+    elif args.analysis == "uncertainty_cal":
+        csv_path = os.path.join(experiment_dir, f"metrics_epoch_{args.epoch}_uncertainty_cal_{args.motion_level}.csv")
+        writer_csv = initialize_writers(csv_path, writer_type=args.analysis)[1]
+
     for step, batch in enumerate(loader):
         img_A = batch["A"].to(DEVICE)
         img_B = batch["B"].to(DEVICE)
@@ -274,6 +278,22 @@ if __name__ == '__main__':
         elif args.analysis == "uncertainty_eval":
 
             run_inference_LDM_self_refining_and_log_uncertainty_eval(
+                diffusion_model=diffusion,
+                autoencoder=autoencoder,
+                context_encoder=spatial_encoder,
+                writer=writer,
+                channels=args.spatial_enc_channels,
+                condition_batch=img_A_latent,
+                gt_batch=batch['B'],
+                step=step,
+                device=DEVICE,
+                scheduler=scheduler,
+                scaling=scaling_factor,
+                csv_writer=writer_csv
+            )
+
+        elif args.analysis == "uncertainty_cal":
+            run_inference_LDM_self_refining_and_log_uncertainty_calibration_tail_bins(
                 diffusion_model=diffusion,
                 autoencoder=autoencoder,
                 context_encoder=spatial_encoder,
