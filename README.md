@@ -1,8 +1,8 @@
-# Latent-UQ
+# TRUST
 
 **A framework for uncertainty-aware diffusion and flow-matching models**
 
-Latent-UQ provides a unified implementation of image-level and latent-space generative models with support for:
+TRUST provides a unified implementation of image-level and latent-space generative models with support for:
 
 - standard generation;
 - aleatoric uncertainty estimation;
