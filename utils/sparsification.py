@@ -1407,15 +1407,16 @@ print("TRUST")
 print(g_trust)
 print("\nPost-hoc sampling")
 print(g_posthoc)
+
 #######
 import os
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
-MODEL = "LFM_02"  # DM, FM, LDM, LFM
+MODEL = "LDM"  # DM, FM, LDM, LFM
 
-BASE_DIR = f"/Users/francescodifeola/Desktop/omega/uncertainty/results/T1_motion/uncertainty_cal/{MODEL}"
+BASE_DIR = f"/Users/francescodifeola/Desktop/omega/uncertainty/results/denoising/uncertainty_cal/{MODEL}"
 
 TRUST_CSV = os.path.join(BASE_DIR, "_TRUST.csv")
 POSTHOC_CSV = os.path.join(BASE_DIR, "_PostHoc_N_8.csv")
@@ -1746,3 +1747,391 @@ fig.savefig(
 
 print("Saved figure.")
 
+############################
+import os
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+MODEL = "LFM_02"  # DM, FM, LDM, LFM
+
+
+col_ylims = {
+    "DM_02":  (0.7, 2.5),
+    "FM_02":  (0.7, 2.5),
+    "LDM_02": (0.6, 3.6),
+    "LFM_02": (0.6, 2.8),
+}
+
+BASE_DIR = f"/Users/francescodifeola/Desktop/omega/uncertainty/results/T1_motion/uncertainty_cal/{MODEL}"
+
+TRUST_CSV = os.path.join(BASE_DIR, "_TRUST.csv")
+POSTHOC_CSV = os.path.join(BASE_DIR, "_PostHoc_N_8.csv")
+
+OUT_PREFIX = f"uncertainty_relative_error_{MODEL}"
+
+
+def load_and_compute_relative_error(csv_path):
+    df = pd.read_csv(csv_path)
+
+    # df = df.iloc[:34987]
+
+    required = {
+        "sample",
+        "bin",
+        "p_low",
+        "p_high",
+        "mean_uncertainty",
+        "mean_error",
+        "count",
+    }
+
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"{csv_path} missing columns: {missing}")
+
+    # Reconstruct image-level MAE from bin-level statistics
+    sample_mae = (
+        df.groupby("sample")
+        .apply(lambda x: np.sum(x["count"] * x["mean_error"]) / np.sum(x["count"]))
+    )
+
+    df["image_mae"] = df["sample"].map(sample_mae)
+
+    # Relative error: bin error normalized by image-level MAE
+    df["relative_error"] = df["mean_error"] / (df["image_mae"] + 1e-12)
+
+    # Aggregate across samples
+    g = (
+        df.groupby(["bin", "p_low", "p_high"])
+        .apply(lambda x: pd.Series({
+            "mean_uncertainty": np.average(
+                x["mean_uncertainty"],
+                weights=x["count"]
+            ),
+
+            "relative_uncertainty": np.average(
+                x["mean_uncertainty"],
+                weights=x["count"]
+            ),
+
+            "mean_relative_error": np.average(
+                x["relative_error"],
+                weights=x["count"]
+        ),
+
+            "std_relative_error": x["relative_error"].std(),
+            "sem_relative_error": x["relative_error"].std() / np.sqrt(len(x)),
+            "count": x["count"].sum(),
+        })
+
+               )
+        .reset_index()
+        .sort_values("bin")
+    )
+
+    # Normalize uncertainty scale for visualization
+    g["relative_uncertainty"] = (
+        g["relative_uncertainty"] /
+        (g["relative_uncertainty"].max() + 1e-12)
+    )
+
+    return df, g
+
+
+df_trust, g_trust = load_and_compute_relative_error(TRUST_CSV)
+df_posthoc, g_posthoc = load_and_compute_relative_error(POSTHOC_CSV)
+
+plt.rcParams.update({
+    "font.family": "serif",
+    "font.size": 12,
+    "axes.labelsize": 14,
+    "axes.titlesize": 14,
+    "legend.fontsize": 12,
+})
+
+fig, ax = plt.subplots(figsize=(4.8, 3.4))
+ax.plot(
+    g_posthoc["relative_uncertainty"],
+    g_posthoc["mean_relative_error"],
+    marker="s",
+    markersize=5,
+    linewidth=2,
+    # color="blue",
+    label="Post-hoc sampling",
+)
+ax.plot(
+    g_trust["relative_uncertainty"],
+    g_trust["mean_relative_error"],
+    marker="s",
+    markersize=5,
+    linewidth=2,
+    # color="orange",
+    label="TRUST",
+)
+
+ax.set_ylim(*col_ylims[MODEL])
+ax.set_xlim(0, 1.05)
+# ax.set_xticks([0.0, 0.5, 1.0])
+ax.axhline(
+    1.0,
+    linestyle="--",
+    linewidth=1.0,
+    color="black",
+    alpha=0.6,
+)
+
+ax.set_xlabel(r"$\tilde{\Sigma}_{\hat{\mathbf{y}},b}$")
+ax.set_ylabel(r"$\mathrm{MAE}_{bin}/\mathrm{MAE}_{img}$")
+
+ax.grid(
+    False,
+    linestyle="--",
+    linewidth=0.6,
+    alpha=0.5,
+)
+
+# ax.legend(frameon=False)
+
+fig.tight_layout()
+
+fig.savefig(
+    os.path.join(BASE_DIR, f"{OUT_PREFIX}.pdf"),
+    bbox_inches="tight",
+)
+
+fig.savefig(
+    os.path.join(BASE_DIR, f"{OUT_PREFIX}.png"),
+    dpi=300,
+    bbox_inches="tight",
+)
+
+g_trust.to_csv(
+    os.path.join(BASE_DIR, f"{OUT_PREFIX}_TRUST_aggregated.csv"),
+    index=False,
+)
+
+g_posthoc.to_csv(
+    os.path.join(BASE_DIR, f"{OUT_PREFIX}_PostHoc_N8_aggregated.csv"),
+    index=False,
+)
+
+print("TRUST")
+print(g_trust)
+
+print("\nPost-hoc sampling")
+print(g_posthoc)
+
+######################################################################################
+import os
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+
+MODEL = "LFM"  # DM_02, FM_02, LDM_02, LFM_02
+
+col_ylims = {
+    "DM":  (0.7, 2.5),
+    "FM":  (0.7, 2.5),
+    "LDM": (0.6, 3.6),
+    "LFM": (0.6, 2.8),
+}
+
+BASE_DIR = f"/Users/francescodifeola/Desktop/omega/uncertainty/results/denoising/uncertainty_cal/{MODEL}"
+
+TRUST_CSV = os.path.join(BASE_DIR, "_TRUST.csv")
+POSTHOC_CSV = os.path.join(BASE_DIR, "_PostHoc_N_8.csv")
+
+OUT_PREFIX = f"uncertainty_relative_error_{MODEL}"
+
+BIN_MARKERS = {
+    0: "o",
+    1: "s",
+    2: "^",
+    3: "D",
+    4: "v",
+    5: "*",
+}
+
+
+def load_and_compute_relative_error(csv_path):
+    df = pd.read_csv(csv_path)
+
+    # df = df.iloc[:34987]
+
+    required = {
+        "sample",
+        "bin",
+        "p_low",
+        "p_high",
+        "mean_uncertainty",
+        "mean_error",
+        "count",
+    }
+
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"{csv_path} missing columns: {missing}")
+
+    sample_mae = (
+        df.groupby("sample")
+        .apply(lambda x: np.sum(x["count"] * x["mean_error"]) / np.sum(x["count"]))
+    )
+
+    df["image_mae"] = df["sample"].map(sample_mae)
+    df["relative_error"] = df["mean_error"] / (df["image_mae"] + 1e-12)
+
+    g = (
+        df.groupby(["bin", "p_low", "p_high"])
+        .apply(lambda x: pd.Series({
+            "mean_uncertainty": np.average(
+                x["mean_uncertainty"],
+                weights=x["count"]
+            ),
+            "relative_uncertainty": np.average(
+                x["mean_uncertainty"],
+                weights=x["count"]
+            ),
+            "mean_relative_error": np.average(
+                x["relative_error"],
+                weights=x["count"]
+            ),
+            "std_relative_error": x["relative_error"].std(),
+            "sem_relative_error": x["relative_error"].std() / np.sqrt(len(x)),
+            "count": x["count"].sum(),
+        }))
+        .reset_index()
+        .sort_values("bin")
+    )
+
+    g["relative_uncertainty"] = (
+        g["relative_uncertainty"] /
+        (g["relative_uncertainty"].max() + 1e-12)
+    )
+
+    return df, g
+
+
+def plot_with_bin_markers(ax, g, color, label):
+    ax.plot(
+        g["relative_uncertainty"],
+        g["mean_relative_error"],
+        linewidth=2,
+        color=color,
+        label=label,
+        zorder=2,
+    )
+
+    for _, row in g.iterrows():
+        b = int(row["bin"])
+        ax.scatter(
+            row["relative_uncertainty"],
+            row["mean_relative_error"],
+            marker=BIN_MARKERS.get(b, "o"),
+            s=45 if b != 5 else 80,
+            color=color,
+            edgecolor="black",
+            linewidth=0.4,
+            zorder=3,
+        )
+
+
+df_trust, g_trust = load_and_compute_relative_error(TRUST_CSV)
+df_posthoc, g_posthoc = load_and_compute_relative_error(POSTHOC_CSV)
+
+plt.rcParams.update({
+    "font.family": "serif",
+    "font.size": 12,
+    "axes.labelsize": 14,
+    "axes.titlesize": 14,
+    "legend.fontsize": 10,
+})
+
+fig, ax = plt.subplots(figsize=(4.8, 3.4))
+
+plot_with_bin_markers(
+    ax,
+    g_posthoc,
+    color="tab:blue",
+    label="Post-hoc sampling",
+)
+
+plot_with_bin_markers(
+    ax,
+    g_trust,
+    color="tab:orange",
+    label="TRUST",
+)
+
+ax.set_ylim(*col_ylims[MODEL])
+ax.set_xlim(0, 1.05)
+
+ax.axhline(
+    1.0,
+    linestyle="--",
+    linewidth=1.0,
+    color="black",
+    alpha=0.6,
+)
+
+ax.set_xlabel(r"$\tilde{\Sigma}_{\hat{\mathbf{y}},b}$")
+ax.set_ylabel(r"$\frac{|\mathbf{y}-\hat{\mathbf{y}}|_{b}}{|\mathbf{y}-\hat{\mathbf{y}}|}$")
+
+"""
+method_legend = ax.legend(
+    frameon=False,
+    loc="upper left",
+)
+
+ax.add_artist(method_legend)
+"""
+
+bin_handles = []
+for b, row in g_trust.iterrows():
+    bin_handles.append(
+        Line2D(
+            [0],
+            [0],
+            marker=BIN_MARKERS.get(int(row["bin"]), "o"),
+            color="none",
+            markerfacecolor="gray",
+            markeredgecolor="black",
+            markersize=7 if int(row["bin"]) != 5 else 9,
+            label=f"{int(row['p_low'])}-{int(row['p_high'])}%",
+        )
+    )
+
+# ax.legend(
+#     handles=bin_handles,
+#     frameon=False,
+#     loc="lower right",
+#     title="Percentile bin",
+#     fontsize=8,
+#     title_fontsize=9,
+# )
+
+ax.grid(False)
+
+fig.tight_layout()
+
+fig.savefig(
+    os.path.join(BASE_DIR, f"{OUT_PREFIX}.pdf"),
+    bbox_inches="tight",
+)
+
+fig.savefig(
+    os.path.join(BASE_DIR, f"{OUT_PREFIX}.png"),
+    dpi=300,
+    bbox_inches="tight",
+)
+
+g_trust.to_csv(
+    os.path.join(BASE_DIR, f"{OUT_PREFIX}_TRUST_aggregated.csv"),
+    index=False,
+)
+
+g_posthoc.to_csv(
+    os.path.join(BASE_DIR, f"{OUT_PREFIX}_PostHoc_N8_aggregated.csv"),
+    index=False,
+)
