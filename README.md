@@ -211,25 +211,4 @@ analysis:
 results/metrics.csv
 ```
 
-Typical columns:
 
-```text
-case_id
-psnr
-ssim
-mae
-u_mean
-u_p95
-u_p99
-u_top1_mean
-u_top5_mean
-```
-
-# Common Use Cases
-
-| Task | Recommended Framework | Recommended Mode |
-|--------|--------|--------|
-| LDCT Denoising | LDM | Aleatoric |
-| T1 → T2 | LDM | Aleatoric |
-| T1 Motion Correction | LDM | SelfCond |
-| Generic Paired Translation | DM/FM/LDM/LFM | Base or Aleatoric |
