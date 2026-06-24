@@ -1,0 +1,9 @@
+data:
+  dataset_class: mri2d
+  dataset_kwargs:
+    dataroot: /path/to/mri/root
+    mri_modalities: [t1n, t1c, t2w, t2f]
+    slice_range: [0, 999]
+    phase: test
+    under_sample_dataset: false
+  scaling_factor: 1.0

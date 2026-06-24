@@ -1,0 +1,41 @@
+run:
+  framework: ldm
+  mode: base
+  task: custom
+  output_dir: outputs
+  experiment_name: ldm_base_experiment
+  epoch: latest
+  checkpoint_root: checkpoints
+model:
+  in_ch: 2
+  out_ch: 1
+  vae_ckpt: /path/to/vae/checkpoint_dir
+  diff_ckpt: /path/to/base_checkpoint.pth
+  context_ckpt: null
+  backbone_class: null
+  backbone_kwargs: {}
+  vae_class: null
+  vae_kwargs: {}
+inference:
+  batch_size: 1
+  num_workers: 4
+  num_train_timesteps: 1000
+  num_inference_steps: 50
+  beta_start: 0.0015
+  beta_end: 0.0205
+  beta_schedule: scaled_linear_beta
+  K: 10
+  seed: 0
+data:
+  dataset_class: latent_uq.data.example_dataset.RandomPairedDataset
+  dataset_kwargs:
+    length: 4
+    channels: 1
+    height: 256
+    width: 256
+  scaling_factor: 1.0
+analysis:
+  metrics: true
+  sparsification: false
+  spatial_error_correlation: false
+  calibration_bins: false

@@ -1,0 +1,32 @@
+run:
+  framework: dm
+  mode: aleatoric
+  task: smoke
+  output_dir: outputs/checkpoints
+  experiment_name: smoke_dm_aleatoric
+model:
+  backbone_class: latent_uq.models.simple.TinyConvBackbone
+  backbone_kwargs:
+    in_channels: 2
+    out_channels: 1
+    hidden_channels: 8
+    aleatoric: true
+  in_ch: 2
+  out_ch: 1
+data:
+  dataset_class: latent_uq.data.example_dataset.RandomPairedDataset
+  dataset_kwargs:
+    length: 2
+    channels: 1
+    height: 32
+    width: 32
+  scaling_factor: 1.0
+training:
+  backend: generic
+  batch_size: 1
+  num_workers: 0
+  n_epochs: 1
+  lr: 0.0001
+  loss_kwargs:
+    min_logvar: -7.0
+    reg_weight: 0.001

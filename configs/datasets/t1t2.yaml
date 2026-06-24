@@ -1,0 +1,6 @@
+data:
+  dataset_class: t1t2
+  dataset_kwargs:
+    annotation_A: /path/to/t1_annotations.csv
+    annotation_B: /path/to/t2_annotations.csv
+  scaling_factor: 9.404202

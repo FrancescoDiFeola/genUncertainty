@@ -1,0 +1,7 @@
+data:
+  dataset_class: cityscapes
+  dataset_kwargs:
+    root: /path/to/cityscapes
+    split: train
+    resize: [256, 512]
+  scaling_factor: 1.0

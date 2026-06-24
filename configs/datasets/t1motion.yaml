@@ -1,0 +1,8 @@
+data:
+  dataset_class: t1motion
+  dataset_kwargs:
+    annotation_A: /path/to/t1_annotations.csv
+    annotation_B: /path/to/t1_clean_annotations.csv
+    mode: test
+    fixed_motion_level: 0.15
+  scaling_factor: 9.404202

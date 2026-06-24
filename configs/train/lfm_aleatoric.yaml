@@ -1,0 +1,40 @@
+run:
+  framework: lfm
+  mode: aleatoric
+  experiment_name: lfm_aleatoric_experiment
+  task: custom
+  output_dir: outputs/checkpoints
+model:
+  in_ch: 2
+  out_ch: 1
+  vae_ckpt: /path/to/vae/checkpoint_dir
+  diff_ckpt: null
+  unc_decoder_ckpt: null
+  backbone_class: null
+  backbone_kwargs: {}
+  vae_class: null
+  vae_kwargs: {}
+training:
+  n_epochs: 305
+  batch_size: 16
+  lr: 1.5e-05
+  num_workers: 8
+  epoch_start: 0
+  diff_loss_weight: 1.0
+  uncertainty_loss_weight: 0.01
+  uncertainty_calibration: false
+  backend: generic
+  loss_class: null
+  loss_kwargs: {}
+data:
+  dataset_csv: null
+  annotation_A: /path/to/source_or_condition.csv
+  annotation_B: /path/to/target.csv
+  dataroot: null
+  phase: train
+  dataset_class: latent_uq.data.example_dataset.RandomPairedDataset
+  dataset_kwargs:
+    length: 4
+    channels: 1
+    height: 256
+    width: 256

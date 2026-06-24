@@ -1,0 +1,6 @@
+data:
+  dataset_class: my_project.datasets.MyDataset
+  dataset_kwargs:
+    root: /path/to/data
+    split: test
+  scaling_factor: 1.0

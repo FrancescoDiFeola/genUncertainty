@@ -1,0 +1,38 @@
+/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/venv2/lib/python3.10/site-packages/pandas/core/computation/expressions.py:21: UserWarning: Pandas requires version '2.8.4' or newer of 'numexpr' (version '2.8.1' currently installed).
+  from pandas.core.computation.check import NUMEXPR_INSTALLED
+/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/venv2/lib/python3.10/site-packages/pandas/core/arrays/masked.py:60: UserWarning: Pandas requires version '1.3.6' or newer of 'bottleneck' (version '1.3.4' currently installed).
+  from pandas.core import (
+/apps/Arch/software/PyTorch-bundle/1.12.1-foss-2022a-CUDA-11.7.0/lib/python3.10/site-packages/torchvision/io/image.py:13: UserWarning: Failed to load image Python extension: /apps/Arch/software/PyTorch-bundle/1.12.1-foss-2022a-CUDA-11.7.0/lib/python3.10/site-packages/torchvision/image.so: undefined symbol: _ZN3c1017RegisterOperatorsD1Ev
+  warn(f"Failed to load image Python extension: {e}")
+2026-06-23 17:15:10.691829: I tensorflow/core/util/port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+2026-06-23 17:15:11.475646: E external/local_xla/xla/stream_executor/cuda/cuda_fft.cc:467] Unable to register cuFFT factory: Attempting to register factory for plugin cuFFT when one has already been registered
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1782227711.733225  733643 cuda_dnn.cc:8579] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+E0000 00:00:1782227711.797020  733643 cuda_blas.cc:1407] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+W0000 00:00:1782227712.434797  733643 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1782227712.434825  733643 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1782227712.434828  733643 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1782227712.434830  733643 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+2026-06-23 17:15:12.503902: I tensorflow/core/platform/cpu_feature_guard.cc:210] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 AVX512F AVX512_VNNI FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/venv2/lib/python3.10/site-packages/generative/networks/layers/vector_quantizer.py:86: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  @torch.cuda.amp.autocast(enabled=False)
+/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/venv2/lib/python3.10/site-packages/generative/networks/layers/vector_quantizer.py:124: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  @torch.cuda.amp.autocast(enabled=False)
+Traceback (most recent call last):
+  File "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/TRUST_refactored/./scripts/infer.py", line 287, in <module>
+    main()
+  File "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/TRUST_refactored/./scripts/infer.py", line 230, in main
+    model, context_encoder = build_latent_model(args, device)
+  File "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/TRUST_refactored/latent_uq/models/factory.py", line 97, in build_latent_model
+    model = networks.init_ddpm_aleatoric(args.in_ch, args.out_ch, args.diff_ckpt).to(device)
+  File "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/TRUST_refactored/src/brlp/networks.py", line 230, in init_ddpm_aleatoric
+    return load_if(checkpoints_path, ddpm)
+  File "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/TRUST_refactored/src/brlp/networks.py", line 57, in load_if
+    network.load_state_dict(new_checkpoint)
+  File "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/venv2/lib/python3.10/site-packages/torch/nn/modules/module.py", line 2593, in load_state_dict
+    raise RuntimeError(
+RuntimeError: Error(s) in loading state_dict for DiffusionModelUNetAleatoricConcat:
+	size mismatch for conv_in.conv.weight: copying a param with shape torch.Size([64, 6, 3, 3]) from checkpoint, the shape in current model is torch.Size([64, 2, 3, 3]).
+	size mismatch for out.2.conv.weight: copying a param with shape torch.Size([6, 64, 3, 3]) from checkpoint, the shape in current model is torch.Size([2, 64, 3, 3]).
+	size mismatch for out.2.conv.bias: copying a param with shape torch.Size([6]) from checkpoint, the shape in current model is torch.Size([2]).

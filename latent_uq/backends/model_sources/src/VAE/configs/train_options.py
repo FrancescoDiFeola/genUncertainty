@@ -1,0 +1,38 @@
+import torch
+import os
+
+
+class TrainOptions:
+    def __init__(self):
+
+        self.dataroot = "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/OASIS-3_filtered_slices"  # "/mimer/NOBACKUP/groups/naiss2023-6-336/dataset_shared/FDG-PEt_CT-lesion/lung_slices"
+
+
+        # Training settings
+        self.phase = "train"
+
+        self.batchSize = 16
+
+        # Optimizer settings
+        self.lr = 0.0001
+        self.n_epochs = 350
+
+        # Mixed Precision
+        self.amp = True
+
+        # Loss Weights
+        self.perceptual_weight = 0.3
+        self.kl_weight = 1e-6
+        self.adv_weight = 0.0
+
+        # Gradient Accumulation
+        self.gradient_accumulation_steps = 2 if self.batchSize < 2 else 1  # Fix tuple issue
+
+        #self.use_cache = True
+        self.task="T1motion"
+
+        # Dataset parameters (CT/PET)
+        self.slice_range = [0, 10000]
+        self.modalities = ['t1n', 't2w']  # ['CT', 'PET']
+        self.under_sample_dataset = True
+

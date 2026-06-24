@@ -1,0 +1,6 @@
+data:
+  dataset_class: denoising
+  dataset_kwargs:
+    annotation_A: /path/to/lowdose.csv
+    annotation_B: /path/to/fulldose.csv
+  scaling_factor: 7.832608

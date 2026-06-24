@@ -1,0 +1,6 @@
+data:
+  dataset_class: mrtoct
+  dataset_kwargs:
+    csv_path: /path/to/mr_ct_pairs.csv
+    output_size: 256
+  scaling_factor: 6.640712

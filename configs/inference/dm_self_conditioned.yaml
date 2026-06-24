@@ -1,0 +1,43 @@
+run:
+  framework: dm
+  mode: selfcond
+  task: custom
+  output_dir: outputs
+  experiment_name: dm_self_conditioned_experiment
+  epoch: latest
+  checkpoint_root: checkpoints
+model:
+  in_ch: 2
+  out_ch: 1
+  vae_ckpt: null
+  diff_ckpt: /path/to/image_level_model_checkpoint.pth
+  context_ckpt: /path/to/context_encoder_checkpoint.pth
+  spatial_enc_channels: 1
+  cross_attention_dim: 128
+  backbone_class: null
+  backbone_kwargs: {}
+  vae_class: null
+  vae_kwargs: {}
+inference:
+  batch_size: 1
+  num_workers: 4
+  num_train_timesteps: 1000
+  num_inference_steps: 50
+  beta_start: 0.0015
+  beta_end: 0.0205
+  beta_schedule: scaled_linear_beta
+  K: 10
+  seed: 0
+data:
+  dataset_class: latent_uq.data.example_dataset.RandomPairedDataset
+  dataset_kwargs:
+    length: 4
+    channels: 1
+    height: 256
+    width: 256
+  scaling_factor: 1.0
+analysis:
+  metrics: true
+  sparsification: false
+  spatial_error_correlation: true
+  calibration_bins: true

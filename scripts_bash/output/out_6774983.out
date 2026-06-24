@@ -1,0 +1,518 @@
+This job can be monitored from: https://job.c3se.chalmers.se/alvis/6774983
+attention mode is flash
+{
+  "config": "configs/inference/ldm_aleatoric.yaml",
+  "framework": "ldm",
+  "mode": "aleatoric",
+  "task": "custom",
+  "analyses": [
+    "metrics"
+  ],
+  "analysis": null,
+  "output_dir": "outputs",
+  "checkpoint_root": "checkpoints",
+  "experiment_name": "ldm_aleatoric_experiment",
+  "epoch": "latest",
+  "diff_ckpt": "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/T1T2/LDM_aleatoric_T1T2/diffusion-ep-300.pth",
+  "context_ckpt": null,
+  "vae_ckpt": "/mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/T1T2/VAE",
+  "dataset_class": "t1t2",
+  "annotation_A": null,
+  "annotation_B": null,
+  "csv_path": null,
+  "dataroot": null,
+  "output_size": null,
+  "scaling_factor": 9.404202,
+  "motion_level": "0.15",
+  "batch_size": 1,
+  "num_workers": 4,
+  "in_ch": 6,
+  "out_ch": 3,
+  "spatial_enc_channels": 2,
+  "cross_attention_dim": 128,
+  "num_train_timesteps": 1000,
+  "num_inference_steps": 50,
+  "beta_start": 0.0015,
+  "beta_end": 0.0205,
+  "beta_schedule": "scaled_linear_beta",
+  "base_img_size_numel": 4096,
+  "input_img_size_numel": 4096,
+  "K": 10,
+  "ablation": false,
+  "seed": 0,
+  "device": "cuda",
+  "dry_run": false,
+  "backbone_class": null,
+  "backbone_kwargs": {},
+  "vae_class": null,
+  "vae_kwargs": {},
+  "dataset_kwargs": {
+    "annotation_A": "/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_A.csv",
+    "annotation_B": "/mimer/NOBACKUP/groups/snic2022-5-277/cadornato/Data/annotations_B.csv"
+  }
+}
+5760
+[INFO] Loading checkpoint: /mimer/NOBACKUP/groups/naiss2023-6-336/fdifeola/diffusion/checkpoints/T1T2/VAE/autoencoder_epoch301.pth
+Loading checkpoint...
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50
+num_steps: 50

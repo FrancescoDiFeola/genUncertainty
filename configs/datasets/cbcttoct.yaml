@@ -1,0 +1,6 @@
+data:
+  dataset_class: cbcttoct
+  dataset_kwargs:
+    csv_path: /path/to/cbct_ct_pairs.csv
+    output_size: 256
+  scaling_factor: 9.744896

@@ -1,0 +1,7 @@
+data:
+  dataset_class: nd
+  dataset_kwargs:
+    csv_path: /path/to/pairs.csv
+    root_dir: /path/to/root
+    resize: [272, 480]
+  scaling_factor: 1.0
