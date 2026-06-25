@@ -1,104 +1,120 @@
-# TRUST
 
-**A framework for uncertainty-aware diffusion and flow-matching models**
+# GenUncertainty
 
-TRUST provides a unified implementation of image-level and latent-space generative models with support for:
+**A modular framework for uncertainty-aware diffusion and flow-matching models**
 
-- standard generation;
-- aleatoric uncertainty estimation;
-- uncertainty-guided self-conditioning;
-- uncertainty quality evaluation;
-- reliability analysis.
+GenUncertainty provides a unified framework for training and evaluating image-level and latent generative models with intrinsic uncertainty estimation and self-conditioning.
 
-The framework is task-agnostic and can be applied to paired image-to-image translation problems such as:
+## Features
 
-- Low-Dose CT → Full-Dose CT;
-- T1 MRI → T2 MRI;
-- Motion-Corrupted MRI → Clean MRI;
-- CT → PET;
-- MR → CT;
-- CBCT → CT.
+- Image-level Diffusion Models (DM)
+- Image-level Flow Matching (FM)
+- Latent Diffusion Models (LDM)
+- Latent Flow Matching (LFM)
+- Base, Aleatoric and Self-Conditioned modes
+- Configurable training and inference through YAML
+- Dataset-agnostic interface
+- Modular inference analyses
 
 ---
 
-# Supported Frameworks
-
-| Framework | Description |
-|------------|------------|
-| DM | Image-level Diffusion Model |
-| FM | Image-level Flow Matching |
-| LDM | Latent Diffusion Model |
-| LFM | Latent Flow Matching |
-
-# Supported Uncertainty Modes
-
-| Mode | Description |
-|--------|------------|
-| base | Standard generative model |
-| aleatoric | Heteroscedastic uncertainty estimation |
-| selfcond | Uncertainty-guided self-conditioning |
-
----
-
-# Framework Overview
+# Architecture
 
 ```text
 Dataset
    │
    ▼
-Condition / Target
+DataLoader
    │
    ▼
-(Optional) VAE Encoder
+(Optional) VAE
    │
    ▼
-DM / FM / LDM / LFM
+Generative Backbone
    │
-   ├── Prediction
-   └── Uncertainty
+   ├── Base
+   ├── Aleatoric
+   └── Self-Conditioned
    │
    ▼
 Inference
    │
    ▼
 Analysis
+   │
+   ▼
+Results
 ```
 
-# Repository Structure
+---
+
+# Repository Layout
 
 ```text
+configs/
+    datasets/
+    train/
+    inference/
+
+scripts/
+    train.py
+    infer.py
+
 latent_uq/
-├── configs/
-├── scripts/
-│   ├── train.py
-│   └── infer.py
-├── latent_uq/
-│   ├── data/
-│   ├── models/
-│   ├── losses/
-│   ├── inference/
-│   ├── backends/
-│   ├── schedulers/
-│   └── utils/
-├── tests/
-└── results/
+    data/
+    models/
+    losses/
+    inference/
+    backends/
+    schedulers/
+    utils/
+
+tests/
+results/
 ```
+
+## Folder overview
+
+- **configs/**: experiment configuration.
+- **scripts/**: user entry points.
+- **latent_uq/data/**: dataset factory and dataset implementations.
+- **latent_uq/models/**: backbones, VAE and model builders.
+- **latent_uq/losses/**: training losses.
+- **latent_uq/inference/**: inference utilities and analyses.
+- **latent_uq/backends/**: framework-specific execution logic.
+- **tests/**: smoke tests.
+
+---
+
+# Installation
+
+```bash
+conda create -n genunc python=3.10
+conda activate genunc
+pip install -r requirements.txt
+pip install -e .
+python tests/smoke_imports.py
+```
+
+---
 
 # Quick Start
 
-## Training
+## Train
 
 ```bash
 python scripts/train.py --config configs/train/ldm_aleatoric.yaml
 ```
 
-## Inference
+## Infer
 
 ```bash
 python scripts/infer.py --config configs/inference/ldm_aleatoric.yaml
 ```
 
-# Supported Datasets
+---
+
+# Supported Tasks
 
 ## LDCT Denoising
 
@@ -108,10 +124,9 @@ data:
   dataset_kwargs:
     annotation_A: /path/to/lowdose.csv
     annotation_B: /path/to/fulldose.csv
-  scaling_factor: 7.832608
 ```
 
-## T1 → T2 MRI
+## T1 → T2
 
 ```yaml
 data:
@@ -119,7 +134,6 @@ data:
   dataset_kwargs:
     annotation_A: /path/to/t1.csv
     annotation_B: /path/to/t2.csv
-  scaling_factor: 9.404202
 ```
 
 ## T1 Motion Correction
@@ -130,57 +144,24 @@ data:
   dataset_kwargs:
     annotation_A: /path/to/corrupted.csv
     annotation_B: /path/to/clean.csv
-  motion_level: 0.15
+    motion_level: 0.15
 ```
 
-# Adding a New Dataset
+---
 
-```python
-class MyDataset(BasePairedDataset):
-    def __getitem__(self, idx):
-        return {
-            "condition": condition_tensor,
-            "target": target_tensor,
-            "case_id": case_id,
-        }
-```
+# Configuration
 
-```yaml
-data:
-  dataset_class: my_project.datasets.MyDataset
-  dataset_kwargs:
-    root: /path/to/data
-```
+Three configuration groups are used:
 
-# Changing the Backbone
+- `configs/datasets/`: reusable dataset templates.
+- `configs/train/`: training experiments.
+- `configs/inference/`: inference experiments.
 
-```yaml
-model:
-  backbone_class: my_project.models.MyBackbone
-  backbone_kwargs:
-    in_channels: 6
-    out_channels: 3
-```
-
-For uncertainty-aware modes:
-
-```python
-{
-    "prediction": pred,
-    "logvar": logvar
-}
-```
-
-# Changing the VAE
-
-```yaml
-model:
-  vae_class: my_project.models.VAE3D
-  vae_kwargs:
-    latent_channels: 4
-```
+---
 
 # Inference Analyses
+
+Enable analyses in the inference YAML:
 
 ```yaml
 analysis:
@@ -190,25 +171,94 @@ analysis:
   calibration_bins: true
 ```
 
-## Available Analyses
+| Analysis | Output |
+|----------|--------|
+| metrics | MAE, PSNR, SSIM |
+| sparsification | AUSE, AURG |
+| spatial_error_correlation | Pearson, Spearman, AUROC |
+| calibration_bins | uncertainty-error calibration |
 
-- metrics → MAE, PSNR, SSIM
-- sparsification → AUSE, AURG
-- spatial_error_correlation → Pearson, Spearman, AUROC
-- calibration_bins → uncertainty-error calibration
+---
 
-# Analysis Compatibility
+# Extending the Framework
 
-| Mode | metrics | sparsification | spatial_error_correlation | calibration_bins |
-|--------|--------|--------|--------|--------|
-| base | ✓ | ✗ | ✗ | ✗ |
-| aleatoric | ✓ | ✓ | ✓ | ✓ |
-| selfcond | ✓ | ✓ | ✓ | ✓ |
+## Add a Dataset
 
-# Output Files
+Create a new dataset in `latent_uq/data/` (or its datasets subfolder if present).
 
-```text
-results/metrics.csv
+Return:
+
+```python
+{
+    "condition": condition,
+    "target": target,
+    "case_id": case_id,
+}
 ```
 
+Then update:
 
+```yaml
+data:
+  dataset_class: my_project.datasets.MyDataset
+```
+
+No changes to train.py or infer.py are required.
+
+## Replace the Backbone
+
+Add the implementation under `latent_uq/models/` and update:
+
+```yaml
+model:
+  backbone_class: my_project.models.MyBackbone
+```
+
+## Replace the VAE
+
+For LDM/LFM:
+
+```yaml
+model:
+  vae_class: my_project.models.VAE3D
+```
+
+## Replace the Loss
+
+```yaml
+training:
+  loss_class: my_project.losses.MyLoss
+```
+
+---
+
+# Outputs
+
+Typical output:
+
+```text
+results/
+    metrics.csv
+    predictions/
+```
+
+`metrics.csv` typically contains:
+
+- case_id
+- MAE
+- PSNR
+- SSIM
+- u_mean
+- u_p95
+- u_p99
+- u_top1_mean
+- u_top5_mean
+
+---
+
+# Design Principles
+
+- Dataset-specific logic belongs only to dataset classes.
+- Models are configured through YAML.
+- Training and inference pipelines are shared across tasks.
+- New datasets, backbones, VAEs and losses should be added without modifying the core scripts.
