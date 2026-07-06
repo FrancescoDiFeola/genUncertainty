@@ -71,6 +71,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--uncertainty-loss-weight", dest="uncertainty_loss_weight", type=float, default=None)
     p.add_argument("--uncertainty-calibration", dest="uncertainty_calibration", action="store_true")
     p.add_argument("--device", type=str, default=None)
+    p.add_argument("--tensorboard", dest="tensorboard", action="store_true", help="Enable TensorBoard logging for generic training")
+    p.add_argument("--no-tensorboard", dest="tensorboard", action="store_false", help="Disable TensorBoard logging for generic training")
+    p.set_defaults(tensorboard=None)
+    p.add_argument("--tensorboard-dir", dest="tensorboard_dir", type=str, default=None, help="TensorBoard log directory. Defaults to <output_dir>/<experiment_name>/tensorboard")
+    p.add_argument("--image-log-max-items", dest="image_log_max_items", type=int, default=None, help="Maximum number of samples displayed in TensorBoard image grids")
     p.add_argument("--dry-run", action="store_true", help="Validate config and print what would be executed")
     return p.parse_args()
 
