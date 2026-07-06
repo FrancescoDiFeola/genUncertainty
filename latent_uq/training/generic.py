@@ -321,6 +321,16 @@ def run_generic_training(args: Any, cfg: dict[str, Any] | None = None) -> None:
     output_dir = Path(getattr(args, "output_dir", "outputs/checkpoints")) / str(getattr(args, "experiment_name", "experiment"))
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    tensorboard_enabled = bool(getattr(args, "tensorboard", True))
+    tensorboard_dir = Path(getattr(args, "tensorboard_dir", None) or (output_dir / "tensorboard"))
+    image_log_max_items = int(getattr(args, "image_log_max_items", 4) or 4)
+    writer = _build_summary_writer(tensorboard_dir, tensorboard_enabled)
+    if writer is not None:
+        writer.add_text("config/framework", framework, 0)
+        writer.add_text("config/mode", mode, 0)
+        writer.add_text("config/dataset", dataset.__class__.__name__, 0)
+
+    global_step = 0
     backbone.train()
     for epoch in range(n_epochs):
         running = 0.0
