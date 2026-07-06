@@ -8,6 +8,7 @@ from typing import Any, Mapping
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
+from torchvision.utils import make_grid
 
 from latent_uq.data.factory import build_dataset
 from latent_uq.data.batch import get_condition_target_case_id
