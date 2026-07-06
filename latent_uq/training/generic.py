@@ -194,6 +194,89 @@ def _make_training_target(framework: str, target: torch.Tensor):
         return noisy, timesteps, objective
     raise ValueError(f"Unsupported framework: {framework}")
 
+def _build_summary_writer(log_dir: Path, enabled: bool):
+    """Create a TensorBoard SummaryWriter lazily.
+
+    This keeps the package importable even when tensorboard is not installed.
+    If logging is enabled and tensorboard is missing, a clear runtime error is
+    raised with installation instructions.
+    """
+    if not enabled:
+        return None
+    try:
+        from torch.utils.tensorboard import SummaryWriter
+    except Exception as exc:  # pragma: no cover - depends on environment
+        raise RuntimeError(
+            "TensorBoard logging is enabled but tensorboard is not installed. "
+            "Install it with `pip install tensorboard` or disable logging with "
+            "`--no-tensorboard` / `training.tensorboard: false`."
+        ) from exc
+    return SummaryWriter(log_dir=str(log_dir))
+
+def _as_image_tensor(x: torch.Tensor, max_items: int = 4) -> torch.Tensor:
+    """Prepare a tensor for TensorBoard image logging.
+
+    The function is intentionally conservative and task-agnostic:
+    - keeps only the first `max_items` samples;
+    - if the tensor has more than 3 channels, logs the first channel;
+    - normalizes each grid to [0, 1] through `make_grid(normalize=True)`.
+    """
+    x = x.detach().float().cpu()
+    if x.ndim == 5:
+        # For 3D tensors B,C,D,H,W, log the central slice.
+        x = x[:, :, x.shape[2] // 2]
+    if x.ndim == 3:
+        x = x.unsqueeze(1)
+    if x.ndim != 4:
+        raise ValueError(f"Expected image-like tensor with 3, 4 or 5 dims, got shape {tuple(x.shape)}")
+    x = x[:max_items]
+    if x.shape[1] not in (1, 3):
+        x = x[:, :1]
+    return make_grid(x, nrow=min(max_items, x.shape[0]), normalize=True, scale_each=True)
+
+
+def _log_training_images(
+    writer: Any | None,
+    *,
+    global_step: int,
+    condition: torch.Tensor,
+    target: torch.Tensor,
+    noisy: torch.Tensor,
+    prediction: torch.Tensor,
+    logvar: torch.Tensor | None = None,
+    prefix: str = "train",
+    max_items: int = 4,
+) -> None:
+    """Log representative training tensors to TensorBoard.
+
+    These visualizations are generic: for image-level models they correspond to
+    image-domain tensors; for latent models, `noisy` and `prediction` may be
+    latent-space tensors and should be interpreted as debugging maps.
+    """
+    if writer is None:
+        return
+    tensors = {
+        "condition": condition,
+        "target": target,
+        "noisy_or_latent_input": noisy,
+        "model_prediction": prediction,
+    }
+    if logvar is not None:
+        tensors["predicted_variance"] = torch.exp(logvar.detach().float())
+    for name, tensor in tensors.items():
+        try:
+            writer.add_image(f"{prefix}/{name}", _as_image_tensor(tensor, max_items=max_items), global_step)
+        except Exception as exc:
+            # Do not interrupt training because of a visualization-only issue.
+            writer.add_text(f"{prefix}/{name}_logging_warning", str(exc), global_step)
+
+
+def _should_log_images(batch_idx: int, num_batches: int) -> bool:
+    """Return True at the beginning and around half epoch."""
+    if num_batches <= 1:
+        return batch_idx == 0
+    half_idx = max(0, num_batches // 2)
+    return batch_idx in {0, half_idx}
 
 def run_generic_training(args: Any, cfg: dict[str, Any] | None = None) -> None:
     """Task-agnostic training loop.
