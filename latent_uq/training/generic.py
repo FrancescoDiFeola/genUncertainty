@@ -332,43 +332,73 @@ def run_generic_training(args: Any, cfg: dict[str, Any] | None = None) -> None:
 
     global_step = 0
     backbone.train()
-    for epoch in range(n_epochs):
-        running = 0.0
-        for batch in loader:
-            condition, target, _ = get_condition_target_case_id(batch)
-            condition = condition.to(device).float()
-            target = target.to(device).float()
+    try:
+        for epoch in range(n_epochs):
+            running = 0.0
+            num_batches = max(len(loader), 1)
+            for batch_idx, batch in enumerate(loader):
+                condition, target, _ = get_condition_target_case_id(batch)
+                condition = condition.to(device).float()
+                target = target.to(device).float()
 
-            condition_z = _encode_if_needed(vae, condition, scaling_factor)
-            target_z = _encode_if_needed(vae, target, scaling_factor)
-            noisy, timesteps, objective = _make_training_target(framework, target_z)
-            model_input = torch.cat([noisy, condition_z], dim=1)
+                condition_z = _encode_if_needed(vae, condition, scaling_factor)
+                target_z = _encode_if_needed(vae, target, scaling_factor)
+                noisy, timesteps, objective = _make_training_target(framework, target_z)
+                model_input = torch.cat([noisy, condition_z], dim=1)
 
-            context = None
-            if mode == "selfcond" and context_encoder is not None:
-                # A neutral context keeps the generic loop executable. For exact
-                # project-specific self-conditioning training, use a specialized
-                # backend or override this block.
-                try:
-                    dummy_unc = torch.zeros((condition_z.shape[0], 1, condition_z.shape[-2], condition_z.shape[-1]), device=device)
-                    context = context_encoder(dummy_unc)
-                except Exception:
-                    context = None
+                context = None
+                if mode == "selfcond" and context_encoder is not None:
+                    # A neutral context keeps the generic loop executable. For exact
+                    # project-specific self-conditioning training, use a specialized
+                    # backend or override this block.
+                    try:
+                        dummy_unc = torch.zeros((condition_z.shape[0], 1, condition_z.shape[-2], condition_z.shape[-1]), device=device)
+                        context = context_encoder(dummy_unc)
+                    except Exception:
+                        context = None
 
-            pred, logvar = _call_model(backbone, model_input, timesteps, context=context)
-            if mode in {"aleatoric", "selfcond"} and logvar is not None:
-                loss = criterion(pred, logvar, objective)
-            else:
-                loss = criterion(pred, objective)
+                pred, logvar = _call_model(backbone, model_input, timesteps, context=context)
+                if mode in {"aleatoric", "selfcond"} and logvar is not None:
+                    loss = criterion(pred, logvar, objective)
+                else:
+                    loss = criterion(pred, objective)
 
-            optimizer.zero_grad(set_to_none=True)
-            loss.backward()
-            optimizer.step()
-            running += float(loss.detach().cpu())
+                optimizer.zero_grad(set_to_none=True)
+                loss.backward()
+                optimizer.step()
 
-        mean_loss = running / max(len(loader), 1)
-        print(f"Epoch {epoch + 1}/{n_epochs} - loss: {mean_loss:.6f}")
-        torch.save({"model": backbone.state_dict(), "epoch": epoch + 1, "loss": mean_loss}, output_dir / f"model_ep_{epoch + 1}.pth")
+                loss_value = float(loss.detach().cpu())
+                running += loss_value
+                if writer is not None:
+                    writer.add_scalar("train/loss_step", loss_value, global_step)
+                    writer.add_scalar("train/epoch_fraction", epoch + (batch_idx + 1) / num_batches, global_step)
+                    if logvar is not None:
+                        writer.add_scalar("train/logvar_mean", float(logvar.detach().mean().cpu()), global_step)
+                        writer.add_scalar("train/variance_mean", float(torch.exp(logvar.detach().float()).mean().cpu()), global_step)
+                    if _should_log_images(batch_idx, num_batches):
+                        _log_training_images(
+                            writer,
+                            global_step=global_step,
+                            condition=condition,
+                            target=target,
+                            noisy=noisy,
+                            prediction=pred,
+                            logvar=logvar,
+                            prefix="train",
+                            max_items=image_log_max_items,
+                        )
+
+                global_step += 1
+
+            mean_loss = running / num_batches
+            print(f"Epoch {epoch + 1}/{n_epochs} - loss: {mean_loss:.6f}")
+            if writer is not None:
+                writer.add_scalar("train/loss_epoch", mean_loss, epoch + 1)
+            torch.save({"model": backbone.state_dict(), "epoch": epoch + 1, "loss": mean_loss}, output_dir / f"model_ep_{epoch + 1}.pth")
+    finally:
+        if writer is not None:
+            writer.flush()
+            writer.close()
 
     metadata = {
         "framework": framework,
