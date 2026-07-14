@@ -9,7 +9,8 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torchvision.utils import make_grid
-
+import matplotlib.cm as cm
+import numpy as np
 from latent_uq.data.factory import build_dataset
 from latent_uq.data.batch import get_condition_target_case_id
 from latent_uq.frameworks import is_latent_framework, normalize_framework
@@ -234,6 +235,53 @@ def _as_image_tensor(x: torch.Tensor, max_items: int = 4) -> torch.Tensor:
         x = x[:, :1]
     return make_grid(x, nrow=min(max_items, x.shape[0]), normalize=True, scale_each=True)
 
+def _as_heatmap_grid(
+    x: torch.Tensor,
+    max_items: int = 4,
+    cmap: str = "inferno",
+) -> torch.Tensor:
+
+    """
+    Convert a scalar map tensor to an RGB heatmap grid for TensorBoard.
+    Accepts:
+    - B,C,H,W
+    - B,C,D,H,W, using central slice
+    Returns:
+    - 3,H,W grid
+    """
+
+    x = x.detach().float().cpu()
+    if x.ndim == 5:
+        x = x[:, :, x.shape[2] // 2]
+
+    if x.ndim == 3:
+        x = x.unsqueeze(1)
+
+    if x.ndim != 4:
+        raise ValueError(f"Expected tensor with 3, 4 or 5 dims, got {tuple(x.shape)}")
+
+    x = x[:max_items]
+
+    if x.shape[1] != 1:
+        x = x[:, :1]
+
+    heatmaps = []
+    colormap = cm.get_cmap(cmap)
+    for i in range(x.shape[0]):
+        arr = x[i, 0].numpy()
+        p1, p99 = np.percentile(arr, [1, 99])
+        arr = np.clip(arr, p1, p99)
+        arr = (arr - p1) / (p99 - p1 + 1e-8)
+        rgb = colormap(arr)[..., :3]          # H,W,3
+        rgb = torch.from_numpy(rgb).permute(2, 0, 1).float()
+        heatmaps.append(rgb)
+    heatmaps = torch.stack(heatmaps, dim=0)
+
+    return make_grid(
+        heatmaps,
+        nrow=min(max_items, heatmaps.shape[0]),
+        normalize=False,
+    )
 
 def _log_training_images(
     writer: Any | None,
@@ -247,12 +295,7 @@ def _log_training_images(
     prefix: str = "train",
     max_items: int = 4,
 ) -> None:
-    """Log representative training tensors to TensorBoard.
 
-    These visualizations are generic: for image-level models they correspond to
-    image-domain tensors; for latent models, `noisy` and `prediction` may be
-    latent-space tensors and should be interpreted as debugging maps.
-    """
     if writer is None:
         return
     tensors = {
@@ -261,14 +304,42 @@ def _log_training_images(
         "noisy_or_latent_input": noisy,
         "model_prediction": prediction,
     }
-    if logvar is not None:
-        tensors["predicted_variance"] = torch.exp(logvar.detach().float())
+
     for name, tensor in tensors.items():
         try:
-            writer.add_image(f"{prefix}/{name}", _as_image_tensor(tensor, max_items=max_items), global_step)
+            writer.add_image(
+                f"{prefix}/{name}",
+                _as_image_tensor(tensor, max_items=max_items),
+                global_step,
+            )
+
         except Exception as exc:
-            # Do not interrupt training because of a visualization-only issue.
-            writer.add_text(f"{prefix}/{name}_logging_warning", str(exc), global_step)
+            writer.add_text(
+                f"{prefix}/{name}_logging_warning",
+                str(exc),
+                global_step,
+            )
+
+    if logvar is not None:
+        try:
+            variance = torch.exp(logvar.detach().float())
+            writer.add_image(
+                f"{prefix}/predicted_variance_heatmap",
+                _as_heatmap_grid(
+                    variance,
+                    max_items=max_items,
+                    cmap="inferno",
+                ),
+                global_step,
+            )
+
+        except Exception as exc:
+
+            writer.add_text(
+                f"{prefix}/predicted_variance_heatmap_logging_warning",
+                str(exc),
+                global_step,
+            )
 
 
 def _should_log_images(batch_idx: int, num_batches: int) -> bool:
