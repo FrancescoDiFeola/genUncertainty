@@ -16,7 +16,7 @@ from latent_uq.data.batch import get_condition_target_case_id
 from latent_uq.data.patches import random_crop_pair
 from latent_uq.frameworks import is_latent_framework, normalize_framework
 from latent_uq.losses.heteroscedastic import HeteroscedasticLoss
-from latent_uq.schedulers.factory import build_training_scheduler
+from latent_uq.schedulers.factory import build_scheduler, build_training_scheduler
 from latent_uq.utils.imports import import_object
 
 
@@ -258,6 +258,169 @@ def _build_summary_writer(log_dir: Path, enabled: bool):
         ) from exc
     return SummaryWriter(log_dir=str(log_dir))
 
+
+def _clone_args_with_overrides(args: Any, **overrides: Any) -> SimpleNamespace:
+    """Return a lightweight namespace with selected attributes overridden."""
+    data = dict(vars(args)) if hasattr(args, "__dict__") else {}
+    data.update(overrides)
+    return SimpleNamespace(**data)
+
+
+def _scheduler_step(scheduler: Any, model_output: torch.Tensor, timestep: torch.Tensor, sample: torch.Tensor, next_timestep: torch.Tensor | None = None) -> torch.Tensor:
+    """Call scheduler.step across the MONAI/generative scheduler API variants."""
+    try:
+        if next_timestep is not None:
+            out = scheduler.step(model_output, timestep, sample, next_timestep)
+        else:
+            out = scheduler.step(model_output, timestep, sample)
+    except TypeError:
+        out = scheduler.step(model_output.float(), timestep, sample)
+
+    if isinstance(out, tuple):
+        return out[0]
+    if hasattr(out, "prev_sample"):
+        return out.prev_sample
+    if hasattr(out, "sample"):
+        return out.sample
+    return out
+
+
+def _decode_if_needed(vae: torch.nn.Module | None, z: torch.Tensor, scaling: float) -> torch.Tensor:
+    """Decode latent tensors for TensorBoard preview when a VAE is present."""
+    if vae is None:
+        return z
+    z = z / float(scaling)
+    with torch.no_grad():
+        if hasattr(vae, "decode"):
+            out = vae.decode(z)
+        elif hasattr(vae, "decode_stage_2_outputs"):
+            out = vae.decode_stage_2_outputs(z)
+        else:
+            return z
+    if isinstance(out, tuple):
+        return out[0]
+    return out
+
+
+def _run_training_preview_inference(
+    *,
+    backbone: torch.nn.Module,
+    vae: torch.nn.Module | None,
+    context_encoder: torch.nn.Module | None,
+    framework: str,
+    mode: str,
+    args: Any,
+    condition: torch.Tensor,
+    condition_z: torch.Tensor,
+    target_z: torch.Tensor,
+    scaling_factor: float,
+    preview_steps: int,
+) -> tuple[torch.Tensor, torch.Tensor | None]:
+    """Run a short inference pass for TensorBoard visualization during training.
+
+    The tensors logged elsewhere as ``prediction`` during training are normally
+    U-Net outputs (noise or velocity). This function instead performs an actual
+    generative preview on the current mini-batch and returns the generated image
+    domain tensor plus the last predicted log-variance, when available.
+
+    This is intended only for qualitative monitoring. Keep ``preview_steps``
+    small to avoid slowing down training.
+    """
+    preview_args = _clone_args_with_overrides(args, num_inference_steps=int(preview_steps))
+    scheduler = build_scheduler(preview_args, device=str(condition.device))
+
+    was_training = backbone.training
+    was_context_training = context_encoder.training if context_encoder is not None else None
+    backbone.eval()
+    if context_encoder is not None:
+        context_encoder.eval()
+
+    last_logvar = None
+    try:
+        with torch.no_grad():
+            if framework in {"dm", "ldm"}:
+                if hasattr(scheduler, "set_timesteps"):
+                    try:
+                        scheduler.set_timesteps(int(preview_steps))
+                    except TypeError:
+                        scheduler.set_timesteps(num_inference_steps=int(preview_steps), device=condition.device)
+                if hasattr(scheduler, "alphas_cumprod"):
+                    scheduler.alphas_cumprod = scheduler.alphas_cumprod.to(condition.device)
+
+                x = torch.randn_like(target_z)
+                prev_uncertainty_map = None
+                timesteps = list(getattr(scheduler, "timesteps"))
+                for t in timesteps:
+                    t_tensor = torch.as_tensor([int(t)], device=condition.device).long()
+                    if x.shape[0] != 1:
+                        t_tensor = t_tensor.repeat(x.shape[0])
+                    model_input = torch.cat([x, condition_z], dim=1)
+
+                    context = None
+                    if mode == "selfcond" and context_encoder is not None:
+                        if prev_uncertainty_map is None:
+                            prev_uncertainty_map = torch.zeros((x.shape[0], 1, x.shape[-2], x.shape[-1]), device=x.device)
+                        try:
+                            context = context_encoder(prev_uncertainty_map)
+                        except Exception:
+                            context = None
+
+                    pred, logvar = _call_model(backbone, model_input, t_tensor, context=context)
+                    last_logvar = logvar
+                    if logvar is not None:
+                        prev_uncertainty_map = torch.exp(logvar.detach().float())
+
+                    x = _scheduler_step(scheduler, pred, t_tensor, x)
+
+                generated = _decode_if_needed(vae, x, scaling_factor)
+                return generated, last_logvar
+
+            if framework in {"fm", "lfm"}:
+                x = torch.randn_like(target_z)
+                timesteps = list(getattr(scheduler, "timesteps", []))
+                if not timesteps and hasattr(scheduler, "set_timesteps"):
+                    scheduler.set_timesteps(num_inference_steps=int(preview_steps), device=condition.device)
+                    timesteps = list(getattr(scheduler, "timesteps"))
+
+                prev_uncertainty_map = None
+                for idx, t in enumerate(timesteps):
+                    next_t = timesteps[idx + 1] if idx + 1 < len(timesteps) else None
+                    t_tensor = torch.as_tensor([float(t)], device=condition.device)
+                    if x.shape[0] != 1:
+                        t_tensor = t_tensor.repeat(x.shape[0])
+                    next_t_tensor = None
+                    if next_t is not None:
+                        next_t_tensor = torch.as_tensor([float(next_t)], device=condition.device)
+                        if x.shape[0] != 1:
+                            next_t_tensor = next_t_tensor.repeat(x.shape[0])
+
+                    model_input = torch.cat([x, condition_z], dim=1)
+                    context = None
+                    if mode == "selfcond" and context_encoder is not None:
+                        if prev_uncertainty_map is None:
+                            prev_uncertainty_map = torch.zeros((x.shape[0], 1, x.shape[-2], x.shape[-1]), device=x.device)
+                        try:
+                            context = context_encoder(prev_uncertainty_map)
+                        except Exception:
+                            context = None
+                    pred, logvar = _call_model(backbone, model_input, t_tensor, context=context)
+                    last_logvar = logvar
+                    if logvar is not None:
+                        prev_uncertainty_map = torch.exp(logvar.detach().float())
+
+                    x = _scheduler_step(scheduler, pred, t_tensor, x, next_timestep=next_t_tensor)
+
+                generated = _decode_if_needed(vae, x, scaling_factor)
+                return generated, last_logvar
+
+            raise ValueError(f"Unsupported framework for preview inference: {framework}")
+    finally:
+        if was_training:
+            backbone.train()
+        if context_encoder is not None and was_context_training:
+            context_encoder.train()
+
+
 def _as_image_tensor(x: torch.Tensor, max_items: int = 4) -> torch.Tensor:
     """Prepare a tensor for TensorBoard image logging.
 
@@ -440,6 +603,8 @@ def run_generic_training(args: Any, cfg: dict[str, Any] | None = None) -> None:
     tensorboard_enabled = bool(getattr(args, "tensorboard", True))
     tensorboard_dir = Path(getattr(args, "tensorboard_dir", None) or (output_dir / "tensorboard"))
     image_log_max_items = int(getattr(args, "image_log_max_items", 4) or 4)
+    log_generated_preview = bool(getattr(args, "log_generated_preview", False))
+    preview_steps = int(getattr(args, "preview_steps", 25) or 25)
 
     patch_based = bool(getattr(args, "patch_based", False))
     patch_size = getattr(args, "patch_size", 128)
@@ -451,6 +616,9 @@ def run_generic_training(args: Any, cfg: dict[str, Any] | None = None) -> None:
         writer.add_text("config/mode", mode, 0)
         writer.add_text("config/dataset", dataset.__class__.__name__, 0)
         writer.add_text("config/patch_based", str(patch_based), 0)
+        writer.add_text("config/log_generated_preview", str(log_generated_preview), 0)
+        if log_generated_preview:
+            writer.add_text("config/preview_steps", str(preview_steps), 0)
         if patch_based:
             writer.add_text("config/patch_size", str(patch_size), 0)
 
@@ -508,15 +676,36 @@ def run_generic_training(args: Any, cfg: dict[str, Any] | None = None) -> None:
                         writer.add_scalar("train/logvar_mean", float(logvar.detach().mean().cpu()), global_step)
                         writer.add_scalar("train/variance_mean", float(torch.exp(logvar.detach().float()).mean().cpu()), global_step)
                     if _should_log_images(batch_idx, num_batches):
+                        preview_prediction = pred
+                        preview_logvar = logvar
+                        preview_prefix = "train"
+                        if log_generated_preview:
+                            try:
+                                preview_prediction, preview_logvar = _run_training_preview_inference(
+                                    backbone=backbone,
+                                    vae=vae,
+                                    context_encoder=context_encoder,
+                                    framework=framework,
+                                    mode=mode,
+                                    args=args,
+                                    condition=condition,
+                                    condition_z=condition_z,
+                                    target_z=target_z,
+                                    scaling_factor=scaling_factor,
+                                    preview_steps=preview_steps,
+                                )
+                                preview_prefix = "train/generated_preview"
+                            except Exception as exc:
+                                writer.add_text("train/generated_preview_logging_warning", str(exc), global_step)
                         _log_training_images(
                             writer,
                             global_step=global_step,
                             condition=condition,
                             target=target,
                             noisy=noisy,
-                            prediction=pred,
-                            logvar=logvar,
-                            prefix="train",
+                            prediction=preview_prediction,
+                            logvar=preview_logvar,
+                            prefix=preview_prefix,
                             max_items=image_log_max_items,
                         )
 

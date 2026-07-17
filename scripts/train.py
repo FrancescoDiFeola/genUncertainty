@@ -76,6 +76,10 @@ def parse_args() -> argparse.Namespace:
     p.set_defaults(tensorboard=None)
     p.add_argument("--tensorboard-dir", dest="tensorboard_dir", type=str, default=None, help="TensorBoard log directory. Defaults to <output_dir>/<experiment_name>/tensorboard")
     p.add_argument("--image-log-max-items", dest="image_log_max_items", type=int, default=None, help="Maximum number of samples displayed in TensorBoard image grids")
+    p.add_argument("--log-generated-preview", dest="log_generated_preview", action="store_true", help="Run a short inference preview during TensorBoard image logging")
+    p.add_argument("--no-log-generated-preview", dest="log_generated_preview", action="store_false", help="Disable generated preview during training")
+    p.set_defaults(log_generated_preview=None)
+    p.add_argument("--preview-steps", dest="preview_steps", type=int, default=None, help="Number of inference steps used for generated TensorBoard previews")
 
     # Optional patch-based training. When enabled, the generic trainer extracts
     # a random paired crop from condition/target before noising/encoding.
