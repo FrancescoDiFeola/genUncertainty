@@ -1,0 +1,46 @@
+run:
+  framework: lfm
+  mode: base
+  experiment_name: lfm_base_experiment
+  task: custom
+  output_dir: outputs/checkpoints
+model:
+  in_ch: 2
+  out_ch: 1
+  vae_ckpt: /path/to/vae/checkpoint_dir
+  diff_ckpt: null
+  backbone_class: null
+  backbone_kwargs: {}
+  vae_class: null
+  vae_kwargs: {}
+training:
+  n_epochs: 305
+  batch_size: 16
+  lr: 1.5e-05
+  num_workers: 8
+  epoch_start: 0
+  num_train_timesteps: 1000
+  beta_start: 0.0015
+  beta_end: 0.0205
+  beta_schedule: scaled_linear_beta
+  use_discrete_timesteps: false
+  sample_method: uniform
+  use_timestep_transform: true
+  base_img_size_numel: 4096
+  spatial_dim: 2
+  diff_loss_weight: 1.0
+  backend: generic
+  loss_class: null
+  loss_kwargs: {}
+data:
+  dataset_csv: null
+  annotation_A: /path/to/source_or_condition.csv
+  annotation_B: /path/to/target.csv
+  dataroot: null
+  phase: train
+  dataset_class: latent_uq.data.example_dataset.RandomPairedDataset
+  dataset_kwargs:
+    length: 4
+    channels: 1
+    height: 256
+    width: 256
