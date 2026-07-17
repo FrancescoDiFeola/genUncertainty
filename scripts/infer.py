@@ -89,6 +89,16 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--ablation", action="store_true")
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--device", type=str, default=None)
+    # Optional patch-wise inference. When enabled, images are tiled with a
+    # MONAI-style sliding window and the selected backend is applied patch by
+    # patch. This keeps the existing backend API intact.
+    p.add_argument("--patch-based", dest="patch_based", action="store_true", help="Enable sliding-window patch inference")
+    p.add_argument("--no-patch-based", dest="patch_based", action="store_false", help="Disable sliding-window patch inference")
+    p.set_defaults(patch_based=None)
+    p.add_argument("--patch-size", dest="patch_size", type=int, default=None, help="Sliding-window patch size, e.g. 128")
+    p.add_argument("--patch-overlap", dest="patch_overlap", type=float, default=None, help="Sliding-window overlap fraction, e.g. 0.25")
+    p.add_argument("--patch-pad-value", dest="patch_pad_value", type=float, default=None, help="Padding value used before sliding-window extraction")
+
     p.add_argument("--dry-run", action="store_true")
     return p.parse_args()
 
@@ -183,6 +193,11 @@ def fill_defaults(args: argparse.Namespace) -> argparse.Namespace:
     # provided by the user/config, e.g. for T1 motion-correction datasets.
     args.motion_level = default(args.motion_level, None)
 
+    args.patch_based = bool(default(getattr(args, "patch_based", None), False))
+    args.patch_size = int(default(getattr(args, "patch_size", None), 128))
+    args.patch_overlap = float(default(getattr(args, "patch_overlap", None), 0.25))
+    args.patch_pad_value = float(default(getattr(args, "patch_pad_value", None), -1.0))
+
     exp_dir = Path(args.checkpoint_root) / args.task / args.experiment_name
     if args.diff_ckpt is None and args.epoch != "latest":
         args.diff_ckpt = str(exp_dir / f"diffusion-ep-{args.epoch}.pth")
@@ -218,6 +233,7 @@ def main() -> None:
         make_csv_writers,
         run_inference_backend_batch,
     )
+    from latent_uq.inference.patches import run_patchwise_backend_inference
     from latent_uq.models.factory import build_autoencoder, build_latent_model
     from latent_uq.schedulers.factory import build_scheduler
 
@@ -251,31 +267,47 @@ def main() -> None:
         for step, batch in enumerate(loader):
             img_A = get_condition(batch).to(device)
             img_B = get_target(batch).to(device)
-            if is_latent_framework(args.framework):
-                if autoencoder is None:
-                    raise RuntimeError("Latent frameworks require an autoencoder.")
-                with torch.no_grad():
-                    _, model_condition, _ = autoencoder(img_A)
-                model_condition = model_condition * scaling_factor
-            else:
-                model_condition = img_A
 
-            for analysis, csv_info in csv_writers.items():
-                run_inference_backend_batch(
+            def _run_single_window(condition_window, target_window, window_step: int):
+                if is_latent_framework(args.framework):
+                    if autoencoder is None:
+                        raise RuntimeError("Latent frameworks require an autoencoder.")
+                    with torch.no_grad():
+                        _, model_condition_window, _ = autoencoder(condition_window)
+                    model_condition_window = model_condition_window * scaling_factor
+                else:
+                    model_condition_window = condition_window
+
+                for analysis, csv_info in csv_writers.items():
+                    run_inference_backend_batch(
+                        args=args,
+                        model=model,
+                        autoencoder=autoencoder,
+                        context_encoder=context_encoder,
+                        img_A_latent=model_condition_window,
+                        img_B=target_window,
+                        writer=writer,
+                        step=window_step,
+                        device=device,
+                        scheduler=scheduler,
+                        scaling_factor=scaling_factor,
+                        csv_writer=csv_info["writer"],
+                        analysis=analysis,
+                    )
+
+            if args.patch_based:
+                run_patchwise_backend_inference(
                     args=args,
-                    model=model,
-                    autoencoder=autoencoder,
-                    context_encoder=context_encoder,
-                    img_A_latent=model_condition,
-                    img_B=img_B,
-                    writer=writer,
+                    condition=img_A,
+                    target=img_B,
+                    run_patch_fn=_run_single_window,
                     step=step,
-                    device=device,
-                    scheduler=scheduler,
-                    scaling_factor=scaling_factor,
-                    csv_writer=csv_info["writer"],
-                    analysis=analysis,
+                    patch_size=args.patch_size,
+                    overlap=args.patch_overlap,
+                    pad_value=args.patch_pad_value,
                 )
+            else:
+                _run_single_window(img_A, img_B, step)
     finally:
         close_csv_writers(csv_writers)
         writer.close()

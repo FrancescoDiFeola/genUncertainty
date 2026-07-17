@@ -76,6 +76,15 @@ def parse_args() -> argparse.Namespace:
     p.set_defaults(tensorboard=None)
     p.add_argument("--tensorboard-dir", dest="tensorboard_dir", type=str, default=None, help="TensorBoard log directory. Defaults to <output_dir>/<experiment_name>/tensorboard")
     p.add_argument("--image-log-max-items", dest="image_log_max_items", type=int, default=None, help="Maximum number of samples displayed in TensorBoard image grids")
+
+    # Optional patch-based training. When enabled, the generic trainer extracts
+    # a random paired crop from condition/target before noising/encoding.
+    p.add_argument("--patch-based", dest="patch_based", action="store_true", help="Enable random patch extraction during generic training")
+    p.add_argument("--no-patch-based", dest="patch_based", action="store_false", help="Disable random patch extraction during generic training")
+    p.set_defaults(patch_based=None)
+    p.add_argument("--patch-size", dest="patch_size", type=int, default=None, help="Patch size used for random training crops, e.g. 128")
+    p.add_argument("--patch-pad-value", dest="patch_pad_value", type=float, default=None, help="Padding value used when an image is smaller than patch_size")
+
     p.add_argument("--dry-run", action="store_true", help="Validate config and print what would be executed")
     return p.parse_args()
 

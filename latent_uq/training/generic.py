@@ -13,6 +13,7 @@ import matplotlib.cm as cm
 import numpy as np
 from latent_uq.data.factory import build_dataset
 from latent_uq.data.batch import get_condition_target_case_id
+from latent_uq.data.patches import random_crop_pair
 from latent_uq.frameworks import is_latent_framework, normalize_framework
 from latent_uq.losses.heteroscedastic import HeteroscedasticLoss
 from latent_uq.schedulers.factory import build_training_scheduler
@@ -439,11 +440,19 @@ def run_generic_training(args: Any, cfg: dict[str, Any] | None = None) -> None:
     tensorboard_enabled = bool(getattr(args, "tensorboard", True))
     tensorboard_dir = Path(getattr(args, "tensorboard_dir", None) or (output_dir / "tensorboard"))
     image_log_max_items = int(getattr(args, "image_log_max_items", 4) or 4)
+
+    patch_based = bool(getattr(args, "patch_based", False))
+    patch_size = getattr(args, "patch_size", 128)
+    patch_pad_value = float(getattr(args, "patch_pad_value", -1.0) if getattr(args, "patch_pad_value", None) is not None else -1.0)
+
     writer = _build_summary_writer(tensorboard_dir, tensorboard_enabled)
     if writer is not None:
         writer.add_text("config/framework", framework, 0)
         writer.add_text("config/mode", mode, 0)
         writer.add_text("config/dataset", dataset.__class__.__name__, 0)
+        writer.add_text("config/patch_based", str(patch_based), 0)
+        if patch_based:
+            writer.add_text("config/patch_size", str(patch_size), 0)
 
     global_step = 0
     backbone.train()
@@ -455,6 +464,14 @@ def run_generic_training(args: Any, cfg: dict[str, Any] | None = None) -> None:
                 condition, target, _ = get_condition_target_case_id(batch)
                 condition = condition.to(device).float()
                 target = target.to(device).float()
+
+                if patch_based:
+                    condition, target = random_crop_pair(
+                        condition,
+                        target,
+                        patch_size=patch_size,
+                        pad_value=patch_pad_value,
+                    )
 
                 condition_z = _encode_if_needed(vae, condition, scaling_factor)
                 target_z = _encode_if_needed(vae, target, scaling_factor)
