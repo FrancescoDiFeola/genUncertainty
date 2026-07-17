@@ -15,6 +15,7 @@ from latent_uq.data.factory import build_dataset
 from latent_uq.data.batch import get_condition_target_case_id
 from latent_uq.frameworks import is_latent_framework, normalize_framework
 from latent_uq.losses.heteroscedastic import HeteroscedasticLoss
+from latent_uq.schedulers.factory import build_training_scheduler
 from latent_uq.utils.imports import import_object
 
 
@@ -174,25 +175,67 @@ def _call_model(model: torch.nn.Module, model_input: torch.Tensor, timesteps: to
     return out, None
 
 
-def _make_training_target(framework: str, target: torch.Tensor):
-    b = target.shape[0]
-    device = target.device
+def _sample_timesteps(scheduler: Any, target: torch.Tensor) -> torch.Tensor:
+    """Sample training timesteps using the scheduler API when available."""
+    if hasattr(scheduler, "sample_timesteps"):
+        timesteps = scheduler.sample_timesteps(target)
+    else:
+        num_train_timesteps = int(getattr(scheduler, "num_train_timesteps", 1000))
+        timesteps = torch.randint(
+            low=0,
+            high=num_train_timesteps,
+            size=(target.shape[0],),
+            device=target.device,
+        )
+    return timesteps.to(device=target.device).long()
+
+
+def _make_diffusion_training_target(target: torch.Tensor, scheduler: Any):
+    """Create DDPM training targets with the original DDPMScheduler logic."""
     noise = torch.randn_like(target)
+    timesteps = _sample_timesteps(scheduler, target)
+
+    if not hasattr(scheduler, "add_noise"):
+        raise AttributeError(
+            "Diffusion training requires a scheduler with add_noise(...), "
+            "for example generative.networks.schedulers.DDPMScheduler."
+        )
+
+    noisy = scheduler.add_noise(
+        original_samples=target,
+        noise=noise,
+        timesteps=timesteps,
+    )
+    objective = noise
+    return noisy, timesteps, objective
+
+
+def _make_flow_matching_training_target(target: torch.Tensor, scheduler: Any):
+    """Create flow-matching training targets with the original RFlowScheduler."""
+    noise = torch.randn_like(target)
+    timesteps = _sample_timesteps(scheduler, target)
+
+    if not hasattr(scheduler, "add_noise"):
+        raise AttributeError(
+            "Flow-matching training requires a scheduler with add_noise(...), "
+            "for example monai.networks.schedulers.RFlowScheduler."
+        )
+
+    noisy = scheduler.add_noise(
+        original_samples=target,
+        noise=noise,
+        timesteps=timesteps,
+    )
+    objective = target - noise
+    return noisy, timesteps, objective
+
+
+def _make_training_target(framework: str, target: torch.Tensor, scheduler: Any):
+    """Create noisy inputs and training objective using the framework scheduler."""
     if framework in {"dm", "ldm"}:
-        timesteps = torch.randint(0, 1000, (b,), device=device).long()
-        # Lightweight noising rule for the generic trainer. Project-specific
-        # schedulers can be introduced by replacing this function or passing a
-        # custom training backend.
-        alpha = torch.rand((b, 1, 1, 1), device=device)
-        noisy = alpha.sqrt() * target + (1.0 - alpha).sqrt() * noise
-        objective = noise
-        return noisy, timesteps, objective
+        return _make_diffusion_training_target(target, scheduler)
     if framework in {"fm", "lfm"}:
-        t = torch.rand((b, 1, 1, 1), device=device)
-        noisy = (1.0 - t) * noise + t * target
-        objective = target - noise
-        timesteps = (t.flatten() * 1000).long()
-        return noisy, timesteps, objective
+        return _make_flow_matching_training_target(target, scheduler)
     raise ValueError(f"Unsupported framework: {framework}")
 
 def _build_summary_writer(log_dir: Path, enabled: bool):
@@ -383,6 +426,7 @@ def run_generic_training(args: Any, cfg: dict[str, Any] | None = None) -> None:
     backbone = build_backbone(args, device)
     context_encoder = build_context_encoder(args, device)
     criterion = build_loss(args)
+    training_scheduler = build_training_scheduler(args)
 
     params = list(backbone.parameters())
     if context_encoder is not None and bool(getattr(args, "train_context_encoder", False)):
@@ -414,7 +458,7 @@ def run_generic_training(args: Any, cfg: dict[str, Any] | None = None) -> None:
 
                 condition_z = _encode_if_needed(vae, condition, scaling_factor)
                 target_z = _encode_if_needed(vae, target, scaling_factor)
-                noisy, timesteps, objective = _make_training_target(framework, target_z)
+                noisy, timesteps, objective = _make_training_target(framework, target_z, training_scheduler)
                 model_input = torch.cat([noisy, condition_z], dim=1)
 
                 context = None
