@@ -212,7 +212,17 @@ def _make_diffusion_training_target(target: torch.Tensor, scheduler: Any):
 
 
 def _make_flow_matching_training_target(target: torch.Tensor, scheduler: Any):
-    """Create flow-matching training targets with the original RFlowScheduler."""
+    """Create the rectified-flow target used by the legacy FM/LFM trainers.
+
+    The MONAI ``RFlowScheduler`` constructs the interpolated state ``x_t`` via
+    ``add_noise``.  For the straight rectified-flow path used in the legacy
+    implementation, the supervised vector field is constant along the path:
+
+        v_target = x_data - x_noise
+
+    Keeping this target independent of ``t`` is intentional and exactly mirrors
+    ``(img_B_latent - noise).float()`` in the legacy LFM code.
+    """
     noise = torch.randn_like(target)
     timesteps = _sample_timesteps(scheduler, target)
 
@@ -227,7 +237,7 @@ def _make_flow_matching_training_target(target: torch.Tensor, scheduler: Any):
         noise=noise,
         timesteps=timesteps,
     )
-    objective = target - noise
+    objective = (target - noise).float()
     return noisy, timesteps, objective
 
 
@@ -238,6 +248,49 @@ def _make_training_target(framework: str, target: torch.Tensor, scheduler: Any):
     if framework in {"fm", "lfm"}:
         return _make_flow_matching_training_target(target, scheduler)
     raise ValueError(f"Unsupported framework: {framework}")
+
+
+def _compute_training_loss(
+    *,
+    framework: str,
+    mode: str,
+    criterion: torch.nn.Module,
+    prediction: torch.Tensor,
+    logvar: torch.Tensor | None,
+    objective: torch.Tensor,
+    diff_loss_weight: float,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Compute the framework loss and apply the legacy diffusion-loss weight.
+
+    For aleatoric/self-conditioned FM and LFM this is exactly:
+
+        diff_loss_weight * heteroscedastic_loss(
+            pred_velocity_mean, pred_velocity_logvar, x_data - noise
+        )
+
+    The same heteroscedastic negative log-likelihood is retained for DM/LDM,
+    where ``objective`` is the sampled diffusion noise.  The unweighted loss is
+    returned as well so TensorBoard can distinguish the statistical objective
+    from the configured scalar weighting.
+    """
+    framework = normalize_framework(framework)
+    if mode in {"aleatoric", "selfcond"}:
+        if logvar is None:
+            raise ValueError(
+                f"mode={mode!r} requires the backbone to return both prediction "
+                "and log-variance, but logvar was None."
+            )
+        unweighted_loss = criterion(prediction, logvar, objective)
+    else:
+        unweighted_loss = criterion(prediction, objective)
+
+    # Explicitly retain the framework branch to make the rectified-flow
+    # semantics visible and to reject unsupported configurations early.
+    if framework not in {"dm", "ldm", "fm", "lfm"}:
+        raise ValueError(f"Unsupported framework: {framework}")
+
+    weighted_loss = float(diff_loss_weight) * unweighted_loss
+    return weighted_loss, unweighted_loss
 
 def _build_summary_writer(log_dir: Path, enabled: bool):
     """Create a TensorBoard SummaryWriter lazily.
@@ -573,6 +626,7 @@ def run_generic_training(args: Any, cfg: dict[str, Any] | None = None) -> None:
     num_workers = int(getattr(args, "num_workers", 0) or 0)
     n_epochs = int(getattr(args, "n_epochs", 1) or 1)
     lr = float(getattr(args, "lr", 1e-4) or 1e-4)
+    diff_loss_weight = float(getattr(args, "diff_loss_weight", 1.0) if getattr(args, "diff_loss_weight", None) is not None else 1.0)
 
     if dry_run:
         print("Generic training dry-run OK")
@@ -617,6 +671,7 @@ def run_generic_training(args: Any, cfg: dict[str, Any] | None = None) -> None:
         writer.add_text("config/dataset", dataset.__class__.__name__, 0)
         writer.add_text("config/patch_based", str(patch_based), 0)
         writer.add_text("config/log_generated_preview", str(log_generated_preview), 0)
+        writer.add_text("config/diff_loss_weight", str(diff_loss_weight), 0)
         if log_generated_preview:
             writer.add_text("config/preview_steps", str(preview_steps), 0)
         if patch_based:
@@ -658,10 +713,15 @@ def run_generic_training(args: Any, cfg: dict[str, Any] | None = None) -> None:
                         context = None
 
                 pred, logvar = _call_model(backbone, model_input, timesteps, context=context)
-                if mode in {"aleatoric", "selfcond"} and logvar is not None:
-                    loss = criterion(pred, logvar, objective)
-                else:
-                    loss = criterion(pred, objective)
+                loss, unweighted_loss = _compute_training_loss(
+                    framework=framework,
+                    mode=mode,
+                    criterion=criterion,
+                    prediction=pred,
+                    logvar=logvar,
+                    objective=objective,
+                    diff_loss_weight=diff_loss_weight,
+                )
 
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
@@ -671,6 +731,7 @@ def run_generic_training(args: Any, cfg: dict[str, Any] | None = None) -> None:
                 running += loss_value
                 if writer is not None:
                     writer.add_scalar("train/loss_step", loss_value, global_step)
+                    writer.add_scalar("train/loss_unweighted_step", float(unweighted_loss.detach().cpu()), global_step)
                     writer.add_scalar("train/epoch_fraction", epoch + (batch_idx + 1) / num_batches, global_step)
                     if logvar is not None:
                         writer.add_scalar("train/logvar_mean", float(logvar.detach().mean().cpu()), global_step)
