@@ -98,6 +98,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--patch-size", dest="patch_size", type=int, default=None, help="Sliding-window patch size, e.g. 128")
     p.add_argument("--patch-overlap", dest="patch_overlap", type=float, default=None, help="Sliding-window overlap fraction, e.g. 0.25")
     p.add_argument("--patch-pad-value", dest="patch_pad_value", type=float, default=None, help="Padding value used before sliding-window extraction")
+    p.add_argument("--sw-batch-size", dest="sw_batch_size", type=int, default=None, help="Number of windows evaluated per MONAI predictor call")
+    p.add_argument("--patch-blend-mode", dest="patch_blend_mode", choices=["constant", "gaussian"], default=None, help="MONAI overlap blending mode")
+    p.add_argument("--patch-sigma-scale", dest="patch_sigma_scale", type=float, default=None, help="Gaussian blending sigma scale")
+    p.add_argument("--patch-progress", dest="patch_progress", action="store_true", help="Show MONAI sliding-window progress")
+    p.add_argument("--mc-decode-samples", dest="mc_decode_samples", type=int, default=None, help="MC decoder samples for latent aleatoric uncertainty")
 
     p.add_argument("--dry-run", action="store_true")
     return p.parse_args()
@@ -197,6 +202,11 @@ def fill_defaults(args: argparse.Namespace) -> argparse.Namespace:
     args.patch_size = int(default(getattr(args, "patch_size", None), 128))
     args.patch_overlap = float(default(getattr(args, "patch_overlap", None), 0.25))
     args.patch_pad_value = float(default(getattr(args, "patch_pad_value", None), -1.0))
+    args.sw_batch_size = int(default(getattr(args, "sw_batch_size", None), 1))
+    args.patch_blend_mode = default(getattr(args, "patch_blend_mode", None), "gaussian")
+    args.patch_sigma_scale = float(default(getattr(args, "patch_sigma_scale", None), 0.125))
+    args.patch_progress = bool(default(getattr(args, "patch_progress", None), False))
+    args.mc_decode_samples = int(default(getattr(args, "mc_decode_samples", None), 10))
 
     exp_dir = Path(args.checkpoint_root) / args.task / args.experiment_name
     if args.diff_ckpt is None and args.epoch != "latest":
@@ -233,7 +243,10 @@ def main() -> None:
         make_csv_writers,
         run_inference_backend_batch,
     )
-    from latent_uq.inference.patches import run_patchwise_backend_inference
+    from latent_uq.inference.sliding_window import (
+        sliding_window_generate,
+        log_and_analyze_stitched_batch,
+    )
     from latent_uq.models.factory import build_autoencoder, build_latent_model
     from latent_uq.schedulers.factory import build_scheduler
 
@@ -296,15 +309,24 @@ def main() -> None:
                     )
 
             if args.patch_based:
-                run_patchwise_backend_inference(
+                prediction, uncertainty = sliding_window_generate(
+                    img_A,
                     args=args,
+                    model=model,
+                    autoencoder=autoencoder,
+                    context_encoder=context_encoder,
+                    scheduler=scheduler,
+                    scaling_factor=scaling_factor,
+                )
+                log_and_analyze_stitched_batch(
                     condition=img_A,
                     target=img_B,
-                    run_patch_fn=_run_single_window,
+                    prediction=prediction,
+                    uncertainty=uncertainty,
+                    writer=writer,
                     step=step,
-                    patch_size=args.patch_size,
-                    overlap=args.patch_overlap,
-                    pad_value=args.patch_pad_value,
+                    csv_writers=csv_writers,
+                    mode=args.mode,
                 )
             else:
                 _run_single_window(img_A, img_B, step)
