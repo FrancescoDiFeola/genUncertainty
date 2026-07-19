@@ -23,41 +23,63 @@ def import_object(path: str):
 
 
 def build_dataset(args: Any) -> Tuple[Any, float]:
-    """Build a dataset from ``data.dataset_class`` and ``data.dataset_kwargs``.
+    scaling_factor = float(
+        getattr(args, "scaling_factor", 1.0) or 1.0
+    )
 
-    This function is intentionally task-agnostic. To add a new dataset, define a
-    class that follows :class:`latent_uq.data.base.BasePairedDataset` and point
-    the YAML configuration to it, for example:
-
-        data:
-          dataset_class: my_project.datasets.MyDataset
-          dataset_kwargs:
-            root: /path/to/data
-            split: test
-          scaling_factor: 1.0
-
-    No changes to Latent-UQ source code are required.
-    """
-    scaling_factor = float(getattr(args, "scaling_factor", 1.0) or 1.0)
     dataset_class = getattr(args, "dataset_class", None)
-    dataset_kwargs = getattr(args, "dataset_kwargs", None) or {}
+
+    # Copia per evitare di modificare direttamente il dizionario YAML.
+    dataset_kwargs = dict(
+        getattr(args, "dataset_kwargs", None) or {}
+    )
 
     if not dataset_class:
         raise ValueError(
-            "Missing data.dataset_class. Latent-UQ is task-agnostic and no longer "
-            "selects datasets from task names. Provide, for example:\n\n"
-            "data:\n"
-            "  dataset_class: my_project.datasets.MyDataset\n"
-            "  dataset_kwargs:\n"
-            "    root: /path/to/data\n"
-            "    split: test\n"
-            "  scaling_factor: 1.0\n"
+            "Missing data.dataset_class. Provide a built-in alias or "
+            "a fully-qualified dataset class."
         )
+
+    # Compatibilità con la vecchia CLI e con le configurazioni legacy.
+    legacy_argument_names = (
+        "annotation_A",
+        "annotation_B",
+        "csv_path",
+        "dataroot",
+        "output_size",
+        "motion_level",
+    )
+
+    for argument_name in legacy_argument_names:
+        argument_value = getattr(args, argument_name, None)
+
+        # I valori inseriti esplicitamente nella CLI/config legacy
+        # completano dataset_kwargs senza sovrascrivere quelli già presenti.
+        if (
+            argument_value is not None
+            and argument_name not in dataset_kwargs
+        ):
+            dataset_kwargs[argument_name] = argument_value
 
     condition_key = getattr(args, "condition_key", None)
     target_key = getattr(args, "target_key", None)
 
     cls = import_object(dataset_class)
-    dataset = cls(**dataset_kwargs)
-    dataset = StandardizedPairedDataset(dataset, condition_key=condition_key, target_key=target_key)
+
+    try:
+        dataset = cls(**dataset_kwargs)
+    except TypeError as exc:
+        raise TypeError(
+            f"Could not initialize dataset '{dataset_class}'. "
+            f"Arguments passed to the dataset: "
+            f"{sorted(dataset_kwargs.keys())}. "
+            f"Original error: {exc}"
+        ) from exc
+
+    dataset = StandardizedPairedDataset(
+        dataset,
+        condition_key=condition_key,
+        target_key=target_key,
+    )
+
     return dataset, scaling_factor
