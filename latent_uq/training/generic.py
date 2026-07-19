@@ -338,6 +338,44 @@ def _scheduler_step(scheduler: Any, model_output: torch.Tensor, timestep: torch.
     return out
 
 
+def _prepare_preview_timestep(
+    timestep: Any,
+    *,
+    batch_size: int,
+    device: torch.device,
+    dtype: torch.dtype = torch.float32,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Prepare one RFlow timestep for the model and scheduler.
+
+    MONAI versions may expose inference timesteps as scalars, one-element
+    tensors, or tensors already expanded over the batch.  The model always
+    receives a one-dimensional tensor of length ``batch_size``.  The scheduler
+    receives a scalar tensor when every value is identical, matching the legacy
+    ``RFlowScheduler.step(pred, t, x, next_t)`` call, otherwise it receives the
+    original flattened tensor.
+    """
+    value = torch.as_tensor(timestep, device=device, dtype=dtype).reshape(-1)
+    if value.numel() == 0:
+        raise ValueError("Received an empty inference timestep.")
+
+    if value.numel() == 1:
+        scheduler_timestep = value[0]
+        model_timestep = value.repeat(batch_size)
+    elif value.numel() == batch_size:
+        model_timestep = value
+        scheduler_timestep = value[0] if torch.all(value == value[0]) else value
+    elif torch.all(value == value[0]):
+        scheduler_timestep = value[0]
+        model_timestep = value[0].repeat(batch_size)
+    else:
+        raise ValueError(
+            "RFlow inference timestep has an incompatible shape: "
+            f"{tuple(value.shape)} for batch size {batch_size}."
+        )
+
+    return model_timestep, scheduler_timestep
+
+
 def _decode_if_needed(vae: torch.nn.Module | None, z: torch.Tensor, scaling: float) -> torch.Tensor:
     """Decode latent tensors for TensorBoard preview when a VAE is present."""
     if vae is None:
@@ -430,38 +468,68 @@ def _run_training_preview_inference(
 
             if framework in {"fm", "lfm"}:
                 x = torch.randn_like(target_z)
-                timesteps = list(getattr(scheduler, "timesteps", []))
-                if not timesteps and hasattr(scheduler, "set_timesteps"):
-                    scheduler.set_timesteps(num_inference_steps=int(preview_steps), device=condition.device)
-                    timesteps = list(getattr(scheduler, "timesteps"))
+                timesteps_raw = getattr(scheduler, "timesteps", None)
+                if timesteps_raw is None or len(timesteps_raw) == 0:
+                    if not hasattr(scheduler, "set_timesteps"):
+                        raise AttributeError("RFlowScheduler does not expose set_timesteps(...).")
+                    scheduler.set_timesteps(
+                        num_inference_steps=int(preview_steps),
+                        device=condition.device,
+                        input_img_size_numel=int(
+                            getattr(args, "input_img_size_numel", x.shape[-2] * x.shape[-1])
+                        ),
+                    )
+                    timesteps_raw = scheduler.timesteps
+
+                timesteps = list(timesteps_raw)
+                if not timesteps:
+                    raise RuntimeError("RFlowScheduler produced no inference timesteps.")
+
+                # Match the original legacy RFlow sampler: the final next
+                # timestep is zero, rather than None.
+                zero_timestep = torch.zeros_like(torch.as_tensor(timesteps[-1]))
+                next_timesteps = timesteps[1:] + [zero_timestep]
 
                 prev_uncertainty_map = None
-                for idx, t in enumerate(timesteps):
-                    next_t = timesteps[idx + 1] if idx + 1 < len(timesteps) else None
-                    t_tensor = torch.as_tensor([float(t)], device=condition.device)
-                    if x.shape[0] != 1:
-                        t_tensor = t_tensor.repeat(x.shape[0])
-                    next_t_tensor = None
-                    if next_t is not None:
-                        next_t_tensor = torch.as_tensor([float(next_t)], device=condition.device)
-                        if x.shape[0] != 1:
-                            next_t_tensor = next_t_tensor.repeat(x.shape[0])
+                for t, next_t in zip(timesteps, next_timesteps):
+                    model_timestep, scheduler_timestep = _prepare_preview_timestep(
+                        t,
+                        batch_size=x.shape[0],
+                        device=condition.device,
+                    )
+                    _, scheduler_next_timestep = _prepare_preview_timestep(
+                        next_t,
+                        batch_size=x.shape[0],
+                        device=condition.device,
+                    )
 
                     model_input = torch.cat([x, condition_z], dim=1)
                     context = None
                     if mode == "selfcond" and context_encoder is not None:
                         if prev_uncertainty_map is None:
-                            prev_uncertainty_map = torch.zeros((x.shape[0], 1, x.shape[-2], x.shape[-1]), device=x.device)
+                            prev_uncertainty_map = torch.zeros(
+                                (x.shape[0], 1, x.shape[-2], x.shape[-1]),
+                                device=x.device,
+                            )
                         try:
                             context = context_encoder(prev_uncertainty_map)
                         except Exception:
                             context = None
-                    pred, logvar = _call_model(backbone, model_input, t_tensor, context=context)
+
+                    pred, logvar = _call_model(
+                        backbone, model_input, model_timestep, context=context
+                    )
                     last_logvar = logvar
                     if logvar is not None:
                         prev_uncertainty_map = torch.exp(logvar.detach().float())
 
-                    x = _scheduler_step(scheduler, pred, t_tensor, x, next_timestep=next_t_tensor)
+                    x = _scheduler_step(
+                        scheduler,
+                        pred,
+                        scheduler_timestep,
+                        x,
+                        next_timestep=scheduler_next_timestep,
+                    )
 
                 generated = _decode_if_needed(vae, x, scaling_factor)
                 return generated, last_logvar
@@ -737,9 +805,6 @@ def run_generic_training(args: Any, cfg: dict[str, Any] | None = None) -> None:
                         writer.add_scalar("train/logvar_mean", float(logvar.detach().mean().cpu()), global_step)
                         writer.add_scalar("train/variance_mean", float(torch.exp(logvar.detach().float()).mean().cpu()), global_step)
                     if _should_log_images(batch_idx, num_batches):
-                        preview_prediction = pred
-                        preview_logvar = logvar
-                        preview_prefix = "train"
                         if log_generated_preview:
                             try:
                                 preview_prediction, preview_logvar = _run_training_preview_inference(
@@ -755,20 +820,41 @@ def run_generic_training(args: Any, cfg: dict[str, Any] | None = None) -> None:
                                     scaling_factor=scaling_factor,
                                     preview_steps=preview_steps,
                                 )
-                                preview_prefix = "train/generated_preview"
+                                _log_training_images(
+                                    writer,
+                                    global_step=global_step,
+                                    condition=condition,
+                                    target=target,
+                                    noisy=noisy,
+                                    prediction=preview_prediction,
+                                    logvar=preview_logvar,
+                                    prefix="train/generated_preview",
+                                    max_items=image_log_max_items,
+                                )
                             except Exception as exc:
-                                writer.add_text("train/generated_preview_logging_warning", str(exc), global_step)
-                        _log_training_images(
-                            writer,
-                            global_step=global_step,
-                            condition=condition,
-                            target=target,
-                            noisy=noisy,
-                            prediction=preview_prediction,
-                            logvar=preview_logvar,
-                            prefix=preview_prefix,
-                            max_items=image_log_max_items,
-                        )
+                                message = (
+                                    "[generated preview error] "
+                                    f"step={global_step}, framework={framework}, "
+                                    f"error={type(exc).__name__}: {exc}"
+                                )
+                                print(message)
+                                writer.add_text(
+                                    "train/generated_preview_logging_warning",
+                                    f"{type(exc).__name__}: {exc}",
+                                    global_step,
+                                )
+                        else:
+                            _log_training_images(
+                                writer,
+                                global_step=global_step,
+                                condition=condition,
+                                target=target,
+                                noisy=noisy,
+                                prediction=pred,
+                                logvar=logvar,
+                                prefix="train/model_output",
+                                max_items=image_log_max_items,
+                            )
 
                 global_step += 1
 
