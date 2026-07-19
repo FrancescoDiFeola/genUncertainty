@@ -32,30 +32,72 @@ def load_if(checkpoints_path: Optional[str], network: nn.Module) -> nn.Module:
     return network
 """  
 
-def load_if(checkpoints_path: Optional[str], network: nn.Module) -> nn.Module:
-    """
-    Load pretrained weights if available.
+def load_if(
+    checkpoints_path: Optional[str],
+    network: nn.Module,
+) -> nn.Module:
+    """Load network weights from a raw state_dict or a wrapped checkpoint."""
 
-    Args:
-        checkpoints_path (Optional[str]): path of the checkpoints
-        network (nn.Module): the neural network to initialize 
+    if checkpoints_path is None:
+        return network
 
-    Returns:
-        nn.Module: the initialized neural network
-    """
-    if checkpoints_path is not None:
-        assert os.path.exists(checkpoints_path), "Invalid path"
-        print("Loading checkpoint...")
+    if not os.path.exists(checkpoints_path):
+        raise FileNotFoundError(
+            f"Checkpoint not found: {checkpoints_path}"
+        )
 
-        # Load the checkpoint
-        checkpoint = torch.load(checkpoints_path, map_location=torch.device("cpu"))
+    print(f"Loading checkpoint: {checkpoints_path}")
 
-        # Remove 'module.' prefix if present
-        new_checkpoint = {k.replace("module.", ""): v for k, v in checkpoint.items()}
+    checkpoint = torch.load(
+        checkpoints_path,
+        map_location=torch.device("cpu"),
+    )
 
-        # Load updated state dict
-        network.load_state_dict(new_checkpoint)
-    
+    # Checkpoint prodotto dal trainer generico:
+    # {"model": state_dict, "epoch": ..., "loss": ...}
+    if isinstance(checkpoint, dict) and "model" in checkpoint:
+        state_dict = checkpoint["model"]
+
+    # Formato comune alternativo:
+    # {"state_dict": state_dict, ...}
+    elif isinstance(checkpoint, dict) and "state_dict" in checkpoint:
+        state_dict = checkpoint["state_dict"]
+
+    # Legacy checkpoint: state_dict salvato direttamente.
+    else:
+        state_dict = checkpoint
+
+    if not isinstance(state_dict, dict):
+        raise TypeError(
+            "Invalid checkpoint format: expected a state_dict or a "
+            "dictionary containing 'model' or 'state_dict'."
+        )
+
+    cleaned_state_dict = {}
+
+    for key, value in state_dict.items():
+        cleaned_key = key
+
+        if cleaned_key.startswith("module."):
+            cleaned_key = cleaned_key[len("module."):]
+
+        cleaned_state_dict[cleaned_key] = value
+
+    network.load_state_dict(
+        cleaned_state_dict,
+        strict=True,
+    )
+
+    if isinstance(checkpoint, dict):
+        epoch = checkpoint.get("epoch")
+        loss = checkpoint.get("loss")
+
+        if epoch is not None:
+            print(f"Loaded checkpoint from epoch {epoch}")
+
+        if loss is not None:
+            print(f"Checkpoint training loss: {loss}")
+
     return network
 
 def init_autoencoder(checkpoints_path: Optional[str] = None) -> nn.Module:
