@@ -92,9 +92,23 @@ def parse_args() -> argparse.Namespace:
     # Optional patch-wise inference. When enabled, images are tiled with a
     # MONAI-style sliding window and the selected backend is applied patch by
     # patch. This keeps the existing backend API intact.
-    p.add_argument("--patch-based", dest="patch_based", action="store_true", help="Enable sliding-window patch inference")
-    p.add_argument("--no-patch-based", dest="patch_based", action="store_false", help="Disable sliding-window patch inference")
-    p.set_defaults(patch_based=None)
+    patch_group = p.add_mutually_exclusive_group()
+    patch_group.add_argument(
+        "--patch-based",
+        dest="patch_based",
+        action="store_true",
+        help="Enable MONAI sliding-window inference. Disabled by default.",
+    )
+    patch_group.add_argument(
+        "--no-patch-based",
+        dest="patch_based",
+        action="store_false",
+        help="Explicitly disable MONAI sliding-window inference.",
+    )
+    # Deliberately default to False rather than None. This guarantees that an
+    # inference command without either flag always processes the full image and
+    # cannot be switched to sliding-window mode implicitly by a YAML value.
+    p.set_defaults(patch_based=False)
     p.add_argument("--patch-size", dest="patch_size", type=int, default=None, help="Sliding-window patch size, e.g. 128")
     p.add_argument("--patch-overlap", dest="patch_overlap", type=float, default=None, help="Sliding-window overlap fraction, e.g. 0.25")
     p.add_argument("--patch-pad-value", dest="patch_pad_value", type=float, default=None, help="Padding value used before sliding-window extraction")
@@ -198,7 +212,9 @@ def fill_defaults(args: argparse.Namespace) -> argparse.Namespace:
     # provided by the user/config, e.g. for T1 motion-correction datasets.
     args.motion_level = default(args.motion_level, None)
 
-    args.patch_based = bool(default(getattr(args, "patch_based", None), False))
+    # parse_args() already provides an explicit boolean default. Keep this
+    # normalization for programmatic callers that may construct a Namespace.
+    args.patch_based = bool(getattr(args, "patch_based", False))
     args.patch_size = int(default(getattr(args, "patch_size", None), 128))
     args.patch_overlap = float(default(getattr(args, "patch_overlap", None), 0.25))
     args.patch_pad_value = float(default(getattr(args, "patch_pad_value", None), -1.0))
@@ -253,6 +269,14 @@ def main() -> None:
     set_determinism(args.seed)
     device = args.device
     print(json.dumps(vars(args), indent=2))
+    if args.patch_based:
+        print(
+            "Inference mode: MONAI sliding window "
+            f"(patch_size={args.patch_size}, overlap={args.patch_overlap}, "
+            f"blend={args.patch_blend_mode})."
+        )
+    else:
+        print("Inference mode: full image (sliding window disabled).")
 
     dataset, scaling_factor = build_dataset(args)
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
