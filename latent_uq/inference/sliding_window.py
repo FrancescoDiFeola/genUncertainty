@@ -13,6 +13,7 @@ from src.inference.utils import (
     sparsification_curve_fast,
     summarize_uncertainty,
     uncertainty_error_tail_bins_torch,
+    collect_calibration_data,
 )
 
 
@@ -330,6 +331,24 @@ def log_and_analyze_stitched_batch(
         sample_id = step * batch_size + i
         for analysis, info in csv_writers.items():
             _write_analysis(info["writer"], analysis, sample_id, gt_np, pred_np, unc_np)
+            # Match the legacy aleatoric metrics routine: alongside the metrics
+            # CSV, save calibration bins with the legacy six-column schema.
+            aux_writer = info.get("aux_writer")
+            if analysis == "metrics" and aux_writer is not None and unc_np is not None:
+                bin_u, bin_e, bin_n = collect_calibration_data(
+                    torch.as_tensor(unc_np),
+                    torch.as_tensor(np.abs(pred_np - gt_np)),
+                    num_bins=15,
+                )
+                for k in range(len(bin_u)):
+                    aux_writer.writerow({
+                        "Sample": sample_id,
+                        "Bin": k,
+                        "Unc_mean": bin_u[k],
+                        "Err_mean": bin_e[k],
+                        "Count": bin_n[k],
+                        "Type": "calibration",
+                    })
 
         panels = [cond_cpu[i, 0], target_cpu[i, 0], pred_cpu[i, 0], unc_vis[i, 0], err_vis[i, 0]]
         for j, panel in enumerate(panels):

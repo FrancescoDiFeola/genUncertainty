@@ -329,6 +329,7 @@ def main() -> None:
                         scheduler=scheduler,
                         scaling_factor=scaling_factor,
                         csv_writer=csv_info["writer"],
+                        csv_writer_2=csv_info.get("aux_writer"),
                         analysis=analysis,
                     )
 
@@ -359,6 +360,9 @@ def main() -> None:
         writer.close()
 
     paths = {name: str(item["path"]) for name, item in csv_writers.items()}
+    for name, item in csv_writers.items():
+        if item.get("aux_path") is not None:
+            paths[f"{name}_calibration"] = str(item["aux_path"])
     print("Inference complete. Results saved to:")
     print(json.dumps(paths, indent=2))
 

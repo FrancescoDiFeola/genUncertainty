@@ -96,17 +96,36 @@ def make_csv_writer(args: Any, output_dir: Path, analysis: str):
 
 
 def make_csv_writers(args: Any, output_dir: Path):
+    """Create one writer per requested analysis plus legacy companion writers.
+
+    The legacy aleatoric metrics routines always emit two CSV streams:
+    image-level metrics and per-bin calibration data.  Keep those streams
+    separate so both full-image and stitched sliding-window inference produce
+    the same files and schemas.
+    """
     analyses = validate_analyses(args.mode, args.analyses)
     writers = {}
     for analysis in analyses:
         csv_file, writer, path = make_csv_writer(args, output_dir, analysis)
         writers[analysis] = {"file": csv_file, "writer": writer, "path": path}
+
+    if args.mode == "aleatoric" and "metrics" in writers:
+        calibration_path = output_dir / analysis_output_name(args, "calibration_bins")
+        calibration_file, calibration_writer = initialize_writers(
+            csv_path_2=str(calibration_path), writer_type="calibration"
+        )
+        writers["metrics"]["aux_file"] = calibration_file
+        writers["metrics"]["aux_writer"] = calibration_writer
+        writers["metrics"]["aux_path"] = calibration_path
     return writers
 
 
 def close_csv_writers(writers: Dict[str, Dict[str, Any]]) -> None:
     for item in writers.values():
         item["file"].close()
+        aux_file = item.get("aux_file")
+        if aux_file is not None:
+            aux_file.close()
 
 
 def _run_latent_backend_batch(
@@ -210,6 +229,7 @@ def _run_image_backend_batch(
     device: str,
     scheduler,
     csv_writer,
+    csv_writer_2,
     analysis: str,
 ):
     fw = normalize_framework(args.framework)
@@ -259,7 +279,7 @@ def _run_image_backend_batch(
             device=device,
             scheduler=scheduler,
             csv_writer=csv_writer,
-            csv_writer_2=csv_writer,
+            csv_writer_2=csv_writer_2,
         )
 
     if fw == "fm" and mode == "aleatoric":
@@ -283,7 +303,7 @@ def _run_image_backend_batch(
             device=device,
             scheduler=scheduler,
             csv_writer=csv_writer,
-            csv_writer_2=csv_writer,
+            csv_writer_2=csv_writer_2,
             K=args.K,
         )
 
@@ -323,7 +343,7 @@ def _run_image_backend_batch(
                 return run_inference_and_log_v3_clean_uncertainty_calibration_tail_bins(**common)
             if getattr(args, "ablation", False):
                 return run_inference_and_log_v3_clean_unc_integral_ablation(**common)
-            return run_inference_and_log_v3_clean_unc_integral(csv_writer_2=csv_writer, **common)
+            return run_inference_and_log_v3_clean_unc_integral(csv_writer_2=csv_writer_2, **common)
 
         if fw == "fm":
             common = dict(
@@ -356,10 +376,10 @@ def _run_image_backend_batch(
                 return run_inference_RF_calibration_tail_bins(K=args.K, **common)
             if getattr(args, "ablation", False):
                 return run_inference_RF_self_refining_and_log_v3_clean_unc_integral_ablation(
-                    csv_writer_2=csv_writer, K=args.K, **common
+                    csv_writer_2=csv_writer_2, K=args.K, **common
                 )
             return run_inference_RF_self_refining_and_log_v3_clean_unc_integral(
-                csv_writer_2=csv_writer, K=args.K, **common
+                csv_writer_2=csv_writer_2, K=args.K, **common
             )
 
     raise RuntimeError(f"Unsupported image-level combination: framework={fw}, mode={mode}, analysis={analysis}")
@@ -378,7 +398,8 @@ def run_inference_backend_batch(
     scheduler,
     scaling_factor: float,
     csv_writer,
-    analysis: str,
+    csv_writer_2=None,
+    analysis: str = "metrics",
 ):
     analysis = canonicalize_analysis_name(analysis)
     fw = normalize_framework(args.framework)
@@ -410,6 +431,7 @@ def run_inference_backend_batch(
             device=device,
             scheduler=scheduler,
             csv_writer=csv_writer,
+            csv_writer_2=csv_writer_2,
             analysis=analysis,
         )
     raise RuntimeError(f"Unsupported framework: {fw}")
