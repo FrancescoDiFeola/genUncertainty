@@ -83,8 +83,19 @@ def parse_args() -> argparse.Namespace:
 
     # Optional patch-based training. When enabled, the generic trainer extracts
     # a random paired crop from condition/target before noising/encoding.
-    p.add_argument("--patch-based", dest="patch_based", action="store_true", help="Enable random patch extraction during generic training")
-    p.add_argument("--no-patch-based", dest="patch_based", action="store_false", help="Disable random patch extraction during generic training")
+    patch_group = p.add_mutually_exclusive_group()
+    patch_group.add_argument(
+        "--patch-based",
+        dest="patch_based",
+        action="store_true",
+        help="Enable random patch extraction during training.",
+    )
+    patch_group.add_argument(
+        "--no-patch-based",
+        dest="patch_based",
+        action="store_false",
+        help="Disable random patch extraction during training.",
+    )
     p.set_defaults(patch_based=None)
     p.add_argument("--patch-size", dest="patch_size", type=int, default=None, help="Patch size used for random training crops, e.g. 128")
     p.add_argument("--patch-pad-value", dest="patch_pad_value", type=float, default=None, help="Padding value used when an image is smaller than patch_size")
@@ -94,7 +105,11 @@ def parse_args() -> argparse.Namespace:
 
 
 def _resolve_args(cli: argparse.Namespace, cfg: Dict[str, Any]) -> argparse.Namespace:
-    args = merge_into_namespace(cli, cfg, sections=("run", "model", "data", "training"))
+    args = merge_into_namespace(
+        cli,
+        cfg,
+        sections=("run", "model", "data", "training"),
+    )
     if getattr(args, "framework", None) is not None:
         args.framework = normalize_framework(args.framework)
     else:
@@ -107,6 +122,10 @@ def _resolve_args(cli: argparse.Namespace, cfg: Dict[str, Any]) -> argparse.Name
         args.task = "custom"
     if getattr(args, "output_dir", None) is None:
         args.output_dir = "outputs/checkpoints"
+    # Default esplicito: training full-image.
+    # Un valore CLI o YAML già risolto viene mantenuto.
+    if getattr(args, "patch_based", None) is None:
+        args.patch_based = False
     return args
 
 
