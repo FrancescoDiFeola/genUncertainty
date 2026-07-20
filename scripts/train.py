@@ -97,6 +97,7 @@ def parse_args() -> argparse.Namespace:
         help="Disable random patch extraction during training.",
     )
     p.set_defaults(patch_based=None)
+
     p.add_argument("--patch-size", dest="patch_size", type=int, default=None, help="Patch size used for random training crops, e.g. 128")
     p.add_argument("--patch-pad-value", dest="patch_pad_value", type=float, default=None, help="Padding value used when an image is smaller than patch_size")
 

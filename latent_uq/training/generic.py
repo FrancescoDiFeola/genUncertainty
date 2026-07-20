@@ -320,14 +320,39 @@ def _clone_args_with_overrides(args: Any, **overrides: Any) -> SimpleNamespace:
 
 
 def _scheduler_step(scheduler: Any, model_output: torch.Tensor, timestep: torch.Tensor, sample: torch.Tensor, next_timestep: torch.Tensor | None = None) -> torch.Tensor:
-    """Call scheduler.step across the MONAI/generative scheduler API variants."""
+    """Call ``scheduler.step`` across MONAI/generative API variants.
+
+    Diffusion schedulers such as DDIM expect a single scalar timestep for one
+    reverse-process update, while the U-Net normally receives a batch-shaped
+    timestep tensor.  Normalise a repeated batch timestep to a scalar here so a
+    tensor is never evaluated as a Python boolean inside the scheduler.
+    """
+    scheduler_timestep = timestep
+    if torch.is_tensor(scheduler_timestep) and scheduler_timestep.numel() > 1:
+        flat = scheduler_timestep.reshape(-1)
+        if torch.all(flat == flat[0]).item():
+            scheduler_timestep = flat[0]
+        elif next_timestep is None:
+            raise ValueError(
+                "A diffusion scheduler step received multiple different "
+                f"timesteps: {flat.detach().cpu().tolist()}."
+            )
+
+    scheduler_next_timestep = next_timestep
+    if torch.is_tensor(scheduler_next_timestep) and scheduler_next_timestep.numel() > 1:
+        flat_next = scheduler_next_timestep.reshape(-1)
+        if torch.all(flat_next == flat_next[0]).item():
+            scheduler_next_timestep = flat_next[0]
+
     try:
-        if next_timestep is not None:
-            out = scheduler.step(model_output, timestep, sample, next_timestep)
+        if scheduler_next_timestep is not None:
+            out = scheduler.step(
+                model_output, scheduler_timestep, sample, scheduler_next_timestep
+            )
         else:
-            out = scheduler.step(model_output, timestep, sample)
+            out = scheduler.step(model_output, scheduler_timestep, sample)
     except TypeError:
-        out = scheduler.step(model_output.float(), timestep, sample)
+        out = scheduler.step(model_output.float(), scheduler_timestep, sample)
 
     if isinstance(out, tuple):
         return out[0]
@@ -442,9 +467,12 @@ def _run_training_preview_inference(
                 prev_uncertainty_map = None
                 timesteps = list(getattr(scheduler, "timesteps"))
                 for t in timesteps:
-                    t_tensor = torch.as_tensor([int(t)], device=condition.device).long()
-                    if x.shape[0] != 1:
-                        t_tensor = t_tensor.repeat(x.shape[0])
+                    # DDIM uses one scalar timestep per reverse-process step,
+                    # whereas the U-Net expects one timestep per batch item.
+                    scheduler_timestep = torch.as_tensor(
+                        t, device=condition.device, dtype=torch.long
+                    ).reshape(-1)[0]
+                    model_timestep = scheduler_timestep.repeat(x.shape[0])
                     model_input = torch.cat([x, condition_z], dim=1)
 
                     context = None
@@ -456,12 +484,12 @@ def _run_training_preview_inference(
                         except Exception:
                             context = None
 
-                    pred, logvar = _call_model(backbone, model_input, t_tensor, context=context)
+                    pred, logvar = _call_model(backbone, model_input, model_timestep, context=context)
                     last_logvar = logvar
                     if logvar is not None:
                         prev_uncertainty_map = torch.exp(logvar.detach().float())
 
-                    x = _scheduler_step(scheduler, pred, t_tensor, x)
+                    x = _scheduler_step(scheduler, pred, scheduler_timestep, x)
 
                 generated = _decode_if_needed(vae, x, scaling_factor)
                 return generated, last_logvar
