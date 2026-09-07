@@ -188,3 +188,7 @@ Compatibility:
 | `selfcond` | yes | yes | yes | yes |
 
 Invalid combinations are rejected before inference starts.
+
+
+
+prova pull arrenius
