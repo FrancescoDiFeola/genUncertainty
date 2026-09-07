@@ -1,6 +1,6 @@
 # Configuration Reference
 
-This file documents the YAML fields supported by the public entrypoints:
+his file documents the YAML fields supported by the public entrypoints:
 
 ```bash
 python scripts/train.py --config <config.yaml>
