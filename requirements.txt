@@ -1,13 +1,42 @@
+# Runtime dependencies for training, inference, VAE and bundled legacy modules.
+# Use Python 3.10 as in README.md; this is not a tested version lockfile.
+# Install with: python -m pip install -r requirements.txt
+
+# Deep learning and generative models.
 torch
 torchvision
-monai
-generative
+# MONAI 1.4 includes the autoencoder, discriminator and losses used by src/VAE.
+monai>=1.4
+# Provides the "generative" import namespace.
+monai-generative
+einops
+# Required by MONAI PerceptualLoss(network_type="alex") in VAE training.
+lpips
+
+# Numerical processing, datasets and evaluation metrics.
 numpy
 pandas
 scipy
 scikit-image
 scikit-learn
+
+# Medical images and image preprocessing.
+nibabel
+pydicom
+SimpleITK
+Pillow
+# Provides cv2.resize; the project does not require OpenCV GUI functions.
+opencv-python-headless
+
+# Configuration, visualization and training logs.
 matplotlib
 tqdm
 tensorboard
-pyyaml
+PyYAML
+
+# Used by the bundled src/brlp/cli.py legacy command-line module.
+rich
+leaspy
+
+# Optional: xformers (UViT already falls back to PyTorch/math attention).
+# Optional development dependency: pytest (to run tests/test_rectified_flow_loss.py).
