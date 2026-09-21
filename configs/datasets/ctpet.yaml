@@ -1,5 +1,0 @@
-data:
-  dataset_class: ctpet
-  dataset_kwargs:
-    annotation_A: /path/to/ct_pet_pairs.csv
-  scaling_factor: 1.0

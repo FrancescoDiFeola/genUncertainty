@@ -1,42 +1,23 @@
-# Runtime dependencies for training, inference, VAE and bundled legacy modules.
-# Use Python 3.10 as in README.md; this is not a tested version lockfile.
-# Install with: python -m pip install -r requirements.txt
+# This list mirrors [project.dependencies] and [project.optional-dependencies]
+# in pyproject.toml, which remains the single source of truth for version
+# constraints. Keep the two in sync if either one changes.
 
-# Deep learning and generative models.
-torch
-torchvision
-# MONAI 1.4 includes the autoencoder, discriminator and losses used by src/VAE.
-monai>=1.4
-# Provides the "generative" import namespace.
-monai-generative
-einops
-# Required by MONAI PerceptualLoss(network_type="alex") in VAE training.
-lpips
+# Runtime dependencies
+torch>=2.4.1
+monai==1.5.2
+monai-generative==0.2.3
+numpy>=1.24,<3
+einops>=0.7
+PyYAML>=6
+scipy>=1.10
+scikit-image>=0.21
+scikit-learn>=1.3
 
-# Numerical processing, datasets and evaluation metrics.
-numpy
-pandas
-scipy
-scikit-image
-scikit-learn
+# Testing (pyproject.toml's "dev" extra)
+pytest>=8
 
-# Medical images and image preprocessing.
-nibabel
-pydicom
-SimpleITK
-Pillow
-# Provides cv2.resize; the project does not require OpenCV GUI functions.
-opencv-python-headless
+# Optional: TensorBoard training previews/logging (pyproject.toml's "logging" extra)
+# tensorboard>=2.15
 
-# Configuration, visualization and training logs.
-matplotlib
-tqdm
-tensorboard
-PyYAML
-
-# Used by the bundled src/brlp/cli.py legacy command-line module.
-rich
-leaspy
-
-# Optional: xformers (UViT already falls back to PyTorch/math attention).
-# Optional development dependency: pytest (to run tests/test_rectified_flow_loss.py).
+# Installs this project itself (the latent_uq package and the latent-uq CLI).
+-e .

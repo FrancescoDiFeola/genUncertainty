@@ -1,0 +1,39 @@
+# One runnable example. Switch framework/mode with CLI --set overrides.
+framework: dm
+mode: selfcond
+seed: 0
+device: cpu
+
+data:
+  class_path: latent_uq.data.PairedDataset
+  kwargs:
+    csv_path: examples/data/pairs.csv
+  batch_size: 2
+  num_workers: 0
+
+model:
+  condition_channels: 1
+  target_channels: 1
+  context_dim: 128
+  backbone:
+    class_path: latent_uq.models.UNet
+    kwargs:
+      num_channels: [32, 64]
+      num_res_blocks: 1
+      attention_levels: [false, true]
+      norm_num_groups: 8
+      num_head_channels: 8
+
+training:
+  epochs: 1
+  lr: 0.000015
+  tensorboard: false
+
+inference:
+  steps: null  # 50 for DM/LDM; 30 for FM/LFM.
+  uncertainty: auto
+  last_k: null  # Use the selected test function's default.
+  samples: null
+  decode_samples: null
+  analyses: [metrics]
+  save_predictions: true

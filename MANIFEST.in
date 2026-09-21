@@ -1,0 +1,4 @@
+include requirements.txt
+include configs/example.yaml
+recursive-include scripts *.py
+recursive-include tests *.py *.json *.npz
