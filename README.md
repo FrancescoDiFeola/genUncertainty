@@ -154,12 +154,10 @@ clipping by default. `data.drop_last` (default `true`) applies only during
 training — inference always uses every sample.
 
 Self-conditioning trains with two forward passes per step: a gradient-free
-pass with zero context produces an initial variance estimate; that
-variance, percentile-normalized per image (1st–99th percentile) across
-channels and pixels, becomes the cross-attention context for a second,
-optimized forward pass on the same noisy state and timestep. The context
-encoder is trained jointly with the backbone, identically for all four
-frameworks.
+pass with zero context produces an initial variance estimate, which becomes
+the cross-attention context for a second, optimized forward pass on the
+same noisy state and timestep. The context encoder is trained jointly with
+the backbone, identically for all four frameworks.
 
 ## Inference and uncertainty estimation
 
@@ -199,20 +197,20 @@ use different sampling parameters. With a single analysis, output files are
 written directly in the requested directory.
 
 At inference, self-conditioning reuses the previous step's variance as
-context, except at the first step, which needs an extra zero-context
-forward to seed it — so a self-conditioned trajectory takes `steps + 1`
-backbone evaluations. `propagated` uncertainty accumulates variance over
-the last `inference.last_k` steps before the final one; in latent
+context. `propagated` uncertainty accumulates variance over the last
+`inference.last_k` steps before the final one; in latent
 frameworks, that latent variance reaches pixel space by decoding
 `inference.decode_samples` Monte Carlo draws around the final latent state
 (the returned image is always the decoded, unperturbed state — only the
 variance comes from the draws). `posthoc` uncertainty instead samples
 `inference.samples` independent trajectories and reports their population
 variance; `sparsification` uses the error of the first draw, the other
-analyses use the ensemble mean as the prediction. `inference.steps`,
-`last_k`, `samples` and `decode_samples` are all nullable: leave them unset
-to use the model's default (recorded in the run's `run.json`), or set them
-explicitly to run a modified experiment.
+analyses use the ensemble mean as the prediction. `inference.steps`
+defaults to 50 DDIM steps for diffusion and 30 uniform Euler steps for flow
+matching; `last_k`, `samples` and `decode_samples` are similarly nullable,
+each with its own model-specific default (recorded in the run's `run.json`).
+Leave them unset to use those defaults, or set them explicitly to run a
+modified experiment.
 
 ### Analyses
 
