@@ -1,4 +1,4 @@
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import csv
 import json
 from pathlib import Path
@@ -12,8 +12,9 @@ import torch
 from latent_uq.analysis import analyze, sparsification, sparsification_scores
 from latent_uq.cli import infer, main
 from latent_uq.config import from_dict, save_config, Component, CustomAnalysisSpec
-from latent_uq.data import PairedDataset, prepare_batch, random_crop_pair
+from latent_uq.data import PairedDataset, make_loader, prepare_batch, random_crop_pair
 from latent_uq.models import build_models, load_weights, predict
+from latent_uq.sampling import sample
 from latent_uq.training import train, load_checkpoint, restore_models
 
 
@@ -327,3 +328,138 @@ def test_resume_dry_run_loads_checkpoint_without_external_vae(config_factory, tm
         str(checkpoint), "--dry-run"
     ])
     assert not (tmp_path / "dry").exists()
+
+
+def test_checkpoint_saved_before_a_config_field_existed(config_factory, tmp_path):
+    config = config_factory("fm", "base")
+    checkpoint = load_checkpoint(train(config, tmp_path / "train"))
+    del checkpoint["config"]["model"]["spatial_dims"]
+    infer(config, checkpoint, tmp_path / "infer")
+    assert len(list((tmp_path / "infer/predictions").glob("*.npz"))) == 3
+
+
+def test_analyses_accept_volumes():
+    rng = np.random.default_rng(0)
+    target = rng.random((1, 8, 9, 10)).astype(np.float32)
+    prediction = target + 0.1 * rng.random(target.shape).astype(np.float32)
+    uncertainty = rng.random(target.shape).astype(np.float32)
+    for analysis in ("metrics", "sparsification", "calibration", "uncertainty_summary"):
+        assert analyze(target, prediction, uncertainty, analysis=analysis)[analysis]
+    assert np.isfinite(analyze(target, prediction, None)["metrics"][0]["ssim"])
+
+
+TILINGS = ("per_window", "per_window_shared_noise", "per_step")
+
+
+def _sample(condition, models, config, **inference):
+    torch.manual_seed(0)
+    return sample(condition, models, replace(config, inference=replace(config.inference,
+                                                                        **inference)))
+
+
+@pytest.mark.parametrize("framework", ["dm", "fm"])
+@pytest.mark.parametrize("mode,uncertainty", [("base", "none"), ("base", "posthoc"),
+                                              ("aleatoric", "propagated"),
+                                              ("selfcond", "propagated")])
+def test_every_tiling_with_one_window_is_whole_image_sampling(config_factory, framework, mode,
+                                                              uncertainty):
+    config = config_factory(framework, mode)
+    config.inference.uncertainty = uncertainty
+    models = build_models(config)
+    condition = torch.randn(1, 1, 8, 8)
+    whole = _sample(condition, models, config)
+    for tiling in TILINGS:
+        tiled = _sample(condition, models, config, patch_size=8, tiling=tiling)
+        torch.testing.assert_close(tiled.image, whole.image, rtol=1e-5, atol=1e-5)
+        if whole.variance is not None:
+            torch.testing.assert_close(tiled.variance, whole.variance, rtol=1e-5, atol=1e-5)
+
+
+@pytest.mark.parametrize("framework", ["dm", "fm"])
+@pytest.mark.parametrize("mode", ["base", "aleatoric"])
+def test_shared_noise_and_per_step_tiling_keep_one_sample(config_factory, framework, mode):
+    # The test backbone is pointwise and both samplers are deterministic: each pixel's
+    # trajectory then depends only on its own noise, so tilings that share the noise field
+    # reproduce the whole-image sample exactly, while independent window noise does not.
+    config = config_factory(framework, mode)
+    models = build_models(config)
+    condition = torch.randn(1, 1, 12, 12)
+    whole = _sample(condition, models, config)
+    windows = dict(patch_size=4, overlap=0.5)
+    for tiling in ("per_window_shared_noise", "per_step"):
+        tiled = _sample(condition, models, config, tiling=tiling, **windows)
+        torch.testing.assert_close(tiled.image, whole.image, rtol=1e-5, atol=1e-5)
+        if mode != "base":
+            torch.testing.assert_close(tiled.variance, whole.variance, rtol=1e-5, atol=1e-5)
+    independent = _sample(condition, models, config, tiling="per_window", **windows)
+    assert not torch.allclose(independent.image, whole.image, atol=1e-3)
+
+
+def test_tiling_and_loader_validation(config_factory):
+    config = config_factory("ldm", "selfcond")
+    for section, key, value in [("inference", "tiling", "per_pixel"),
+                                ("inference", "tiling", "per_step"),
+                                ("data", "persistent_workers", True),
+                                ("data", "prefetch_factor", 2),
+                                ("inference", "prediction_format", "png"),
+                                ("inference", "window_profile", True)]:
+        values = asdict(config)
+        values[section][key] = value
+        with pytest.raises(ValueError):
+            from_dict(values)
+
+
+def test_loader_worker_options(config_factory):
+    config = config_factory()
+    config.data.num_workers = 1
+    config.data.persistent_workers = True
+    config.data.prefetch_factor = 1
+    config.data.pin_memory = True
+    config.validate()
+    loader = make_loader(config, training=False)
+    assert loader.persistent_workers and loader.prefetch_factor == 1
+    assert next(iter(loader))["condition"].shape == (2, 1, 8, 8)
+
+
+def test_analysis_mask_restricts_every_analysis():
+    from latent_uq.config import Config
+    rng = np.random.default_rng(0)
+    target = rng.random((1, 8, 9, 10)).astype(np.float32)
+    prediction = target + 0.1 * rng.random(target.shape).astype(np.float32)
+    uncertainty = rng.random(target.shape).astype(np.float32)
+    mask = np.zeros(target.shape[1:], bool)
+    mask[2:6, 2:7, 3:8] = True
+    metrics = analyze(target, prediction, uncertainty, mask=mask)["metrics"][0]
+    assert metrics["mse"] == pytest.approx(np.mean((target[0][mask] - prediction[0][mask])**2))
+    outside = prediction.copy()
+    outside[0][~mask] += 5
+    config = Config(framework="fm", mode="selfcond")
+    for analysis in ("metrics", "sparsification", "calibration", "uncertainty_summary"):
+        results = []
+        for candidate in (prediction, outside):
+            np.random.seed(0)
+            results.append(analyze(target, candidate, uncertainty, analysis=analysis,
+                                   config=config, mask=mask))
+        for rows in (results[0], results[1]):
+            for row in rows.get("metrics", []):
+                row.pop("ssim")  # SSIM near the mask border also sees pixels outside it.
+        assert results[0] == results[1]
+    with pytest.raises(ValueError, match="mask"):
+        analyze(target, prediction, uncertainty, mask=np.zeros(target.shape[1:], bool))
+
+
+def test_window_concentration_counts_contributing_windows(config_factory):
+    from latent_uq.sampling import window_concentration
+    config = config_factory()
+    config.inference.blend_mode = "constant"
+    config.inference.patch_size = 8
+    np.testing.assert_allclose(window_concentration((8, 8), config), 1)
+    config.inference.patch_size, config.inference.overlap = 4, 0.5
+    # Windows start at 0, 2 and 4 on each axis, so pixels see 1, 2, 2, 1 windows per axis.
+    concentration = window_concentration((8, 8), config)
+    assert concentration[0, 0] == pytest.approx(1)
+    assert concentration[0, 3] == pytest.approx(1 / 2)
+    assert concentration[3, 4] == pytest.approx(1 / 4)
+    # A window larger than the image is padded as sliding-window inference pads it.
+    config.inference.patch_size = 10
+    np.testing.assert_allclose(window_concentration((8, 7), config), 1)

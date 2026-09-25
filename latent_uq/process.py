@@ -25,7 +25,7 @@ class Process:
                            use_discrete_timesteps=False,
                            sample_method='uniform',
                            use_timestep_transform=True,
-                           spatial_dim=2)
+                           spatial_dim=config.model.spatial_dims)
             self.train_scheduler = RFlowScheduler(**options, base_img_size_numel=base)
             self.sample_scheduler = RFlowScheduler(**options, base_img_size_numel=sample_base)
             self.input_size = p.flow_inference_size or sample_base

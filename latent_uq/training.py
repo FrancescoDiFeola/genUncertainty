@@ -5,7 +5,7 @@ import json
 import random
 import numpy as np
 import torch
-from .config import save_config
+from .config import Config, _construct, save_config
 from .data import make_loader, prepare_batch, random_crop_pair
 from .models import build_models, encode, decode, encode_context, predict, zero_context
 
@@ -51,6 +51,12 @@ def train_step(condition, target, models, process, config):
                 raise ValueError("Uncertainty decoder output must match the image-space error map")
             loss = loss + config.training.calibration_weight * calibration_loss(estimate, error)
     return finite(loss, "training loss")
+
+
+def _preview(image):
+    """First channel of the first image; the central slice of the last axis for volumes."""
+    image = image[:1, :1].cpu()
+    return image[..., image.shape[-1] // 2] if image.ndim == 5 else image
 
 
 def calibration_loss(estimate, error):
@@ -107,7 +113,8 @@ def _save_checkpoint(path, config, models, optimizer, scaler, epoch):
 
 def validate_checkpoint_config(config, checkpoint, *, resume=False):
     """Protect the trained algorithm in both Python and CLI entry points."""
-    current, previous = asdict(config), checkpoint["config"]
+    # Filling in defaults keeps checkpoints saved before a field was added comparable.
+    current, previous = asdict(config), asdict(_construct(Config, checkpoint["config"]))
     protected = ["framework", "mode", "model", "process"]
     if resume:
         protected += ["seed", "data"]
@@ -200,8 +207,14 @@ def train(config, output_dir, *, resume=None):
                 total_loss += float(loss.detach()) * len(condition)
                 items += len(condition)
             mean_loss = total_loss / items
-            history.append(dict(epoch=epoch + 1, loss=mean_loss))
-            print(f"Epoch {epoch+1}/{config.training.epochs}: loss={mean_loss:.6f}")
+            record = dict(epoch=epoch + 1, loss=mean_loss)
+            if torch.device(config.device).type == "cuda":
+                # Peak since the run started, to size batch_size and patch_size.
+                record["max_memory_gb"] = torch.cuda.max_memory_allocated(config.device) / 2**30
+            history.append(record)
+            print(f"Epoch {epoch+1}/{config.training.epochs}: loss={mean_loss:.6f}" +
+                  (f", peak GPU memory={record['max_memory_gb']:.1f} GB"
+                   if "max_memory_gb" in record else ""))
             if writer:
                 writer.add_scalar("train/loss", mean_loss, epoch + 1)
                 if config.training.preview_steps:
@@ -217,8 +230,8 @@ def train(config, output_dir, *, resume=None):
                         config.device).type == "cuda" else []
                     with torch.random.fork_rng(devices=devices):
                         generated = sample(condition[:1], models, preview)
-                    writer.add_images("train/prediction", generated.image[:, :1].cpu(), epoch + 1)
-                    writer.add_images("train/target", target[:1, :1].cpu(), epoch + 1)
+                    writer.add_images("train/prediction", _preview(generated.image), epoch + 1)
+                    writer.add_images("train/target", _preview(target), epoch + 1)
             _save_checkpoint(output / "checkpoint.pt", config, models, optimizer, scaler, epoch + 1)
             with (output / "training.jsonl").open("a") as handle:
                 handle.write(json.dumps(history[-1]) + "\n")

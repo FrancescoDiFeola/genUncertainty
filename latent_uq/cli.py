@@ -101,9 +101,13 @@ def _infer_one(config, checkpoint, output, *, dry_run=False):
             condition, target = prepare_batch(batch,
                                               config,
                                               require_target=bool(config.inference.analyses))
-            reporter.write(condition, target, sample(condition, models, config),
-                           batch.get('case_id'))
-        count = reporter.index
+            reporter.write(condition,
+                           target,
+                           sample(condition, models, config),
+                           batch.get('case_id'),
+                           regions=batch.get('regions'),
+                           affines=batch.get('affine'))
+        count, regions = reporter.index, reporter.regions
     metadata = dict(
         framework=config.framework,
         mode=config.mode,
@@ -115,6 +119,10 @@ def _infer_one(config, checkpoint, output, *, dry_run=False):
         prediction=reference.posthoc_prediction
         if config.uncertainty == 'posthoc' else 'single_trajectory',
         images=count,
+        regions=regions,
+        tiling=config.inference.tiling if config.inference.patch_size is not None else None,
+        prediction_format=config.inference.prediction_format
+        if config.inference.save_predictions else None,
         steps=config.steps,
         model_evaluations_per_trajectory=config.steps + (config.mode == 'selfcond'),
         samples=reference.samples if config.uncertainty == 'posthoc' else 1,

@@ -57,12 +57,18 @@ def make_loader(config, *, training):
         raise ValueError("Dataset must not be empty")
     if training and config.data.drop_last and len(dataset) < config.data.batch_size:
         raise ValueError("drop_last=True would produce no training batches; reduce batch_size")
+    workers = {}
+    if config.data.num_workers > 0:
+        workers = dict(persistent_workers=config.data.persistent_workers,
+                       prefetch_factor=config.data.prefetch_factor)
     return DataLoader(dataset,
                       batch_size=config.data.batch_size,
                       shuffle=training,
                       num_workers=config.data.num_workers,
                       drop_last=training and config.data.drop_last,
-                      worker_init_fn=seed_worker)
+                      worker_init_fn=seed_worker,
+                      pin_memory=config.data.pin_memory,
+                      **workers)
 
 
 def prepare_batch(batch, config, *, require_target=False):
@@ -74,12 +80,14 @@ def prepare_batch(batch, config, *, require_target=False):
         raise ValueError("Training and error analyses require target images")
     if target is not None:
         target = target.to(config.device, dtype=torch.float32)
+    axes = "H,W" if config.model.spatial_dims == 2 else "D,H,W"
     for name, value, channels in [("condition", condition, config.model.condition_channels),
                                   ("target", target, config.model.target_channels)]:
         if value is None:
             continue
-        if value.ndim != 4 or value.shape[1] != channels or min(value.shape) < 1:
-            raise ValueError(f"{name} must be N,{channels},H,W; got {tuple(value.shape)}")
+        if (value.ndim != 2 + config.model.spatial_dims or value.shape[1] != channels
+                or min(value.shape) < 1):
+            raise ValueError(f"{name} must be N,{channels},{axes}; got {tuple(value.shape)}")
         finite(value, name)
     if target is not None and (condition.shape[0] != target.shape[0]
                                or condition.shape[2:] != target.shape[2:]):
@@ -88,14 +96,15 @@ def prepare_batch(batch, config, *, require_target=False):
 
 
 def random_crop_pair(condition, target, size, pad_value=-1):
-    """One shared random crop per pair batch; mismatched images are never truncated."""
+    """One shared random crop per pair batch, over every spatial axis (2D or 3D);
+    mismatched images are never truncated."""
     if condition.shape[0] != target.shape[0] or condition.shape[2:] != target.shape[2:]:
         raise ValueError("Paired crops require matching batch and spatial dimensions")
-    h, w = condition.shape[-2:]
-    ph, pw = max(size - h, 0), max(size - w, 0)
-    padding = (pw // 2, pw - pw // 2, ph // 2, ph - ph // 2)
+    padding = []
+    for extent in reversed(condition.shape[2:]):  # F.pad lists the last axis first.
+        missing = max(size - extent, 0)
+        padding += [missing // 2, missing - missing // 2]
     condition, target = [F.pad(x, padding, value=pad_value) for x in (condition, target)]
-    h, w = condition.shape[-2:]
-    top, left = int(torch.randint(h - size + 1, (1, ))), int(torch.randint(w - size + 1, (1, )))
-    return condition[..., top:top + size, left:left + size], target[..., top:top + size,
-                                                                    left:left + size]
+    starts = [int(torch.randint(extent - size + 1, (1, ))) for extent in condition.shape[2:]]
+    window = (..., *[slice(start, start + size) for start in starts])
+    return condition[window], target[window]

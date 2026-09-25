@@ -24,6 +24,7 @@ Every framework supports three training modes:
 
 A single training loop and configuration schema cover every framework/mode
 combination. Images are 2D `N,C,H,W` tensors; individual dataset items are `C,H,W`.
+`dm` and `fm` also accept 3D `N,C,D,H,W` volumes (see [3D volumes](#3d-volumes)).
 
 ## Installation
 
@@ -151,7 +152,10 @@ configurable under `training`; the clamp applies only inside this loss.
 `training.loss_weight` scales the result. The optimizer is AdamW (default
 learning rate `1.5e-5`, weight decay `0.01`), with CUDA AMP and no gradient
 clipping by default. `data.drop_last` (default `true`) applies only during
-training — inference always uses every sample.
+training — inference always uses every sample. `data.pin_memory`,
+`data.persistent_workers` and `data.prefetch_factor` are passed to the
+`DataLoader` (the last two need `data.num_workers > 0`). On CUDA,
+`training.jsonl` also records the peak GPU memory of the run so far.
 
 Self-conditioning trains with two forward passes per step: a gradient-free
 pass with zero context produces an initial variance estimate, which becomes
@@ -275,6 +279,47 @@ floating-point CHW tensors with matching condition/target spatial
 dimensions. Point `data.class_path` at it and pass its constructor
 arguments through `data.kwargs` — no change to the training or inference
 code is needed.
+
+### 3D volumes
+
+`model.spatial_dims: 3` switches `dm` and `fm` to volumes: the built-in U-Net,
+context encoder, flow scheduler, crops and sliding windows become 3D, and
+`training.patch_size`/`inference.patch_size` denote cubic patches. Flow matching
+additionally requires `process.flow_base_size`, typically the voxel count of
+one training patch (`96**3` for 96³ patches), since the 2D default has no 3D
+counterpart. Analyses accept `C,D,H,W` volumes unchanged.
+
+### BraTS
+
+[latent_uq/brats.py](latent_uq/brats.py) reads BraTS-style NIfTI releases
+described by a fold file — a JSON with a `data_dir` and `train`/`val`/`test`
+lists of `{modality: relative path}` entries, one folder per subject. A one-off
+conversion (requires `pip install -e '.[brats]'`) stores each subject as a
+brain-cropped int16 array plus per-volume intensity percentiles; the same cache
+serves every fold:
+
+```bash
+python scripts/prepare_brats.py --split-file fold0.json --output-dir /path/to/brats_cache --workers 16
+```
+
+`latent_uq.brats.BraTSVolumeDataset` then memory-maps that cache, so a training
+patch reads only its own voxels. [configs/brats.yaml](configs/brats.yaml) is a
+complete 3D setup for one H200 (96³ patches, batch size 8); set its
+`cache_dir` and `split_file`, then:
+
+```bash
+latent-uq train --config configs/brats.yaml --output-dir runs/brats_dm_selfcond
+latent-uq infer --checkpoint runs/brats_dm_selfcond/checkpoint.pt --output-dir runs/brats_dm_selfcond_test \
+  --set data.kwargs.split=test
+```
+
+The source and target modalities are `data.kwargs.condition` and
+`data.kwargs.target`, in channel order; `model.condition_channels` and
+`model.target_channels` must match their lengths. `data.kwargs.patch_size`
+crops the train split only, drawing `samples_per_volume` patches per subject
+and epoch; other splits yield whole volumes. Each modality is clipped to the
+`data.kwargs.percentiles` of its brain voxels and scaled to `[-1, 1]`, with a
+background of `-1`.
 
 ### Backbone and context encoder
 
@@ -403,9 +448,26 @@ run several at once.
 `training.patch_size` enables paired random crops during training.
 `inference.patch_size` enables MONAI sliding-window inference, with
 configurable overlap, blending and window batch size — an extension around
-the full-image algorithms above: learned variance maps are blended
-spatially (an approximation that ignores cross-window covariance), and
-post-hoc variance is computed after stitching each independent full image.
+the full-image algorithms above.
+
+### Sliding-window tiling
+
+`inference.tiling` selects how the windows combine into one image:
+
+| Tiling | Behavior |
+|---|---|
+| `per_window` (default) | Each window runs its own trajectory from its own noise; the final images and variances are blended. |
+| `per_window_shared_noise` | As `per_window`, but every window starts from its crop of one image-wide noise draw. |
+| `per_step` | One image-wide trajectory: at every step the network is evaluated window by window and its predictions and log variances are blended before the scheduler update; each window's self-conditioning context comes from its crop of the previous step's blended maps. |
+
+The three cost the same number of network evaluations. Under `per_window`,
+overlapping windows hold different samples, so blending averages independent
+samples there and spatially blended variances ignore cross-window covariance;
+under `per_step`, every pixel follows a single trajectory. With a single
+window, or with a network whose output at each pixel depends on that pixel
+alone, the two shared-noise tilings reproduce whole-image sampling exactly.
+Post-hoc variance is computed across independently stitched full images for
+every tiling. `per_window_shared_noise` and `per_step` apply to `dm` and `fm`.
 
 ## Development
 

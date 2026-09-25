@@ -55,14 +55,15 @@ class UNet(DiffusionModelUNet):
 class ContextEncoder(nn.Module):
     """Built-in spatial context encoder: normalized variance -> N,1,context_dim tokens."""
 
-    def __init__(self, in_channels, context_dim=128):
+    def __init__(self, in_channels, context_dim=128, spatial_dims=2):
         super().__init__()
-        self.encoder = nn.Sequential(nn.Conv2d(in_channels, 32, 3, padding=1), nn.ReLU(),
-                                     nn.AdaptiveAvgPool2d(4), nn.Flatten(),
-                                     nn.Linear(32 * 4 * 4, 128), nn.ReLU(),
-                                     nn.Linear(128, context_dim))
+        conv, pool = (nn.Conv3d, nn.AdaptiveAvgPool3d) if spatial_dims == 3 else (
+            nn.Conv2d, nn.AdaptiveAvgPool2d)
+        self.encoder = nn.Sequential(conv(in_channels, 32, 3, padding=1), nn.ReLU(), pool(4),
+                                     nn.Flatten(), nn.Linear(32 * 4**spatial_dims, 128),
+                                     nn.ReLU(), nn.Linear(128, context_dim))
         for module in self.modules():
-            if isinstance(module, (nn.Conv2d, nn.Linear)):
+            if isinstance(module, (nn.Conv2d, nn.Conv3d, nn.Linear)):
                 nn.init.kaiming_normal_(module.weight, mode="fan_out", nonlinearity="relu")
                 nn.init.zeros_(module.bias)
 
@@ -114,7 +115,8 @@ def build_models(config, *, initialize=True):
     defaults = dict(in_channels=channels + condition_channels,
                     out_channels=channels,
                     uncertainty=config.mode != "base",
-                    context_dim=spec.context_dim if config.mode == "selfcond" else None)
+                    context_dim=spec.context_dim if config.mode == "selfcond" else None,
+                    spatial_dims=spec.spatial_dims)
     backbone = build(spec.backbone,
                      defaults if spec.backbone.class_path == "latent_uq.models.UNet" else None)
     context = None
@@ -125,7 +127,8 @@ def build_models(config, *, initialize=True):
                     "Built-in ContextEncoder produces one token; provide a custom encoder for other token counts"
                 )
             context_channels = channels * (2 if spec.context_input == "prediction_variance" else 1)
-            context = ContextEncoder(context_channels, spec.context_dim).to(config.device)
+            context = ContextEncoder(context_channels, spec.context_dim,
+                                     spec.spatial_dims).to(config.device)
         else:
             context = build(spec.context_encoder)
     vae = None

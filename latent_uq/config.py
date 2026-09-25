@@ -38,6 +38,9 @@ class DataConfig:
     batch_size: int = 2
     num_workers: int = 0
     drop_last: bool = True  # Applies only during training; inference uses every sample.
+    pin_memory: bool = False  # Page-locked batches for faster host-to-GPU copies.
+    persistent_workers: bool = False  # Keep workers alive across epochs; needs num_workers > 0.
+    prefetch_factor: int | None = None  # Batches loaded ahead per worker; needs num_workers > 0.
 
 
 @dataclass
@@ -54,6 +57,7 @@ class ModelConfig:
     context_input: str = "variance"
     uncertainty_decoder: Component | None = None
     vae_use_forward: bool = True  # forward() must return (reconstruction, mean, sigma).
+    spatial_dims: int = 2  # 3 for N,C,D,H,W volumes (dm and fm only).
 
 
 @dataclass
@@ -93,6 +97,11 @@ class InferenceConfig:
     decode_samples: int | None = None  # 10 aleatoric; 20 selfcond.
     self_conditioning: bool = True  # False implements the test-time ablation.
     patch_size: int | None = None
+    # How sliding windows (patch_size) combine: per_window runs one trajectory per window
+    # and blends the images; per_window_shared_noise does the same from one image-wide
+    # noise draw; per_step runs one image-wide trajectory, blending the network's
+    # window predictions at every step. The last two are for dm/fm.
+    tiling: str = "per_window"
     overlap: float = 0.25
     window_batch_size: int = 1
     blend_mode: str = "gaussian"
@@ -100,6 +109,8 @@ class InferenceConfig:
     analyses: list[str] = field(default_factory=lambda: ["metrics"])
     data_range: float | None = None  # Defaults to max(target) - min(target), per image.
     save_predictions: bool = True
+    prediction_format: str = "npz"  # npz, or nifti for datasets that return an affine.
+    window_profile: bool = False  # Error/variance against window overlap; needs patch_size.
     custom_analyses: dict[str, CustomAnalysisSpec] = field(default_factory=dict)
 
 
@@ -174,6 +185,19 @@ class Config:
             raise ValueError("overlap must be in [0, 1)")
         if self.inference.blend_mode not in {"constant", "gaussian"}:
             raise ValueError("blend_mode must be constant or gaussian")
+        if self.inference.tiling not in {"per_window", "per_window_shared_noise", "per_step"}:
+            raise ValueError("tiling must be per_window, per_window_shared_noise, or per_step")
+        if self.inference.tiling != "per_window" and self.latent:
+            raise ValueError("ldm/lfm tile image-space windows; only per_window tiling applies")
+        if self.inference.prediction_format not in {"npz", "nifti"}:
+            raise ValueError("prediction_format must be npz or nifti")
+        if self.inference.window_profile and self.inference.patch_size is None:
+            raise ValueError("window_profile requires inference.patch_size")
+        if self.data.num_workers == 0 and (self.data.persistent_workers
+                                           or self.data.prefetch_factor is not None):
+            raise ValueError("persistent_workers and prefetch_factor require num_workers > 0")
+        if self.data.prefetch_factor is not None and self.data.prefetch_factor < 1:
+            raise ValueError("prefetch_factor must be positive or null")
         for size in (self.training.patch_size, self.inference.patch_size):
             if size is not None and size < 1:
                 raise ValueError("patch_size must be positive or null")
@@ -192,6 +216,17 @@ class Config:
             raise ValueError("Loss weights, regularization and weight_decay must be nonnegative")
         if self.model.context_input not in {"variance", "prediction_variance"}:
             raise ValueError("context_input must be variance or prediction_variance")
+        if self.model.spatial_dims not in {2, 3}:
+            raise ValueError("model.spatial_dims must be 2 or 3")
+        if self.model.backbone.kwargs.get("spatial_dims",
+                                          self.model.spatial_dims) != self.model.spatial_dims:
+            raise ValueError("model.backbone.kwargs.spatial_dims must match model.spatial_dims")
+        if self.model.spatial_dims == 3 and self.latent:
+            raise ValueError("3D volumes are supported by dm and fm only")
+        if self.model.spatial_dims == 3 and not self.diffusion and self.process.flow_base_size is None:
+            # The 2D default reference size (256²) has no 3D counterpart.
+            raise ValueError("3D flow matching requires process.flow_base_size, e.g. the voxel "
+                             "count of one training patch")
         if self.model.uncertainty_decoder and (self.framework, self.mode) != ("ldm", "aleatoric"):
             raise ValueError("model.uncertainty_decoder is only supported for ldm/aleatoric")
         if self.inference.uncertainty not in {"auto", "none", "propagated", "posthoc"}:

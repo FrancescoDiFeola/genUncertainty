@@ -1,0 +1,56 @@
+# 3D BraTS modality translation: patch-based training, whole-volume sliding-window inference.
+# Sized for one H200 (141 GB). Switch framework/mode with --set, e.g. --set framework=fm.
+# Build the cache first: python scripts/prepare_brats.py --split-file ... --output-dir ...
+framework: dm
+mode: selfcond
+seed: 0
+device: cuda
+
+data:
+  class_path: latent_uq.brats.BraTSVolumeDataset
+  kwargs:
+    cache_dir: /path/to/brats_cache    # output of scripts/prepare_brats.py
+    split_file: /path/to/fold0.json
+    split: train                       # evaluate with --set data.kwargs.split=test
+    condition: [t1, t2, t2f]           # source modalities, in channel order
+    target: [t1ce]                     # target modality
+    patch_size: 96                     # train split only; other splits yield whole volumes
+    samples_per_volume: 8              # patches per subject per epoch: 932 x 8 = 7456
+    percentiles: [0.5, 99.5]
+  batch_size: 8                        # 932 steps per epoch
+  num_workers: 8
+  pin_memory: true
+  persistent_workers: true
+  prefetch_factor: 4
+
+model:
+  spatial_dims: 3
+  condition_channels: 3                # len(data.kwargs.condition)
+  target_channels: 1                   # len(data.kwargs.target)
+  context_dim: 128
+  backbone:
+    class_path: latent_uq.models.UNet
+    kwargs:
+      num_channels: [32, 64, 128, 256]
+      # The middle block keeps its (cross-)attention, where the self-conditioning context
+      # enters; attention at the levels themselves costs memory quadratic in the patch.
+      attention_levels: [false, false, false, false]
+      num_res_blocks: 2
+      norm_num_groups: 32
+      num_head_channels: 32
+
+process:
+  flow_base_size: 884736               # 96**3: the flow timestep transform's reference size
+
+training:
+  epochs: 100
+  amp: true
+
+inference:
+  patch_size: 96
+  # per_window | per_window_shared_noise | per_step (see README, "Sliding-window tiling").
+  tiling: per_step
+  overlap: 0.25                        # 18 windows per 240x240x155 volume (0.5 gives 48)
+  window_batch_size: 9
+  blend_mode: gaussian
+  analyses: [metrics]

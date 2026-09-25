@@ -19,5 +19,8 @@ pytest>=8
 # Optional: TensorBoard training previews/logging (pyproject.toml's "logging" extra)
 # tensorboard>=2.15
 
+# Optional: building the BraTS volume cache (pyproject.toml's "brats" extra)
+# nibabel>=5
+
 # Installs this project itself (the latent_uq package and the latent-uq CLI).
 -e .

@@ -16,6 +16,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8"]
 logging = ["tensorboard>=2.15"]
+brats = ["nibabel>=5"]
 
 [project.scripts]
 latent-uq = "latent_uq.cli:main"
