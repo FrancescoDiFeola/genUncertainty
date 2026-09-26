@@ -8,4 +8,5 @@ __pycache__/
 /outputs/
 /runs/
 /examples/data/
+/hpc/
 .idea/
