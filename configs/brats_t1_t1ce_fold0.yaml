@@ -1,6 +1,6 @@
-# 3D BraTS modality translation: patch-based training, whole-volume sliding-window inference.
-# Sized for one H200 (141 GB). Switch framework/mode with --set, e.g. --set framework=fm.
-# Build the cache first: python scripts/prepare_brats.py --split-file ... --output-dir ...
+# First BraTS experiment: T1 -> T1ce, dm/selfcond, fold 0 (copy of brats.yaml).
+# Differs from brats.yaml only in the data paths, data.kwargs.condition and
+# model.condition_channels. Sized from the smoke test on one GH200 (96 GB visible).
 framework: dm
 mode: selfcond
 seed: 0
@@ -9,10 +9,10 @@ device: cuda
 data:
   class_path: latent_uq.brats.BraTSVolumeDataset
   kwargs:
-    cache_dir: /path/to/brats_cache    # output of scripts/prepare_brats.py
-    split_file: /path/to/fold0.json
+    cache_dir: /nobackup/proj/disk/naiss2023-6-336/shared/datasets/BraTS_cached
+    split_file: /nobackup/proj/disk/naiss2023-6-336/personal/difra/genUncertainty/folds_brats2021_gli/fold0.json
     split: train                       # evaluate with --set data.kwargs.split=test
-    condition: [t1, t2, t2f]           # source modalities, in channel order
+    condition: [t1]                    # source modality
     target: [t1ce]                     # target modality
     patch_size: 96                     # train split only; other splits yield whole volumes
     samples_per_volume: 8              # patches per subject per epoch: 932 x 8 = 7456
@@ -25,7 +25,7 @@ data:
 
 model:
   spatial_dims: 3
-  condition_channels: 3                # len(data.kwargs.condition)
+  condition_channels: 1                # len(data.kwargs.condition)
   target_channels: 1                   # len(data.kwargs.target)
   context_dim: 128
   backbone:

@@ -38,7 +38,7 @@ TITLES = dict(loss="Training loss",
               mse="MSE of the network output",
               logvar="Mean predicted log variance",
               calibration="Calibration loss (unweighted)")
-SKIPPED = {"epoch", "seconds", "max_memory_gb"}  # Bookkeeping, not curves.
+SKIPPED = {"epoch", "seconds", "data_seconds", "max_memory_gb"}  # Bookkeeping, not curves.
 
 
 def require_matplotlib():
@@ -229,7 +229,7 @@ def _save(figure, path):
 
 def plot_losses(records, path, title):
     """One panel per recorded quantity against the epoch; never two scales on one axis.
-    Quantities that stay positive use a log scale."""
+    Positive quantities spanning more than a decade use a log scale."""
     from matplotlib.figure import Figure
     from matplotlib.ticker import MaxNLocator
 
@@ -267,7 +267,7 @@ def plot_losses(records, path, title):
                   color=SERIES,
                   markeredgecolor=SURFACE,
                   markeredgewidth=1.3)
-        if min(values) > 0:
+        if min(values) > 0 and max(values) > 10 * min(values):
             axis.set_yscale("log")
         _style(axis)
         axis.xaxis.set_major_locator(MaxNLocator(integer=True))

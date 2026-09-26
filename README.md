@@ -108,7 +108,11 @@ latent-uq train --config runs/dm_selfcond/config.yaml --resume runs/dm_selfcond/
 ```
 
 `training.epochs` is always the total epoch budget, not an additional
-amount. Resuming rejects any override that would change the trained
+amount; since the learning rate is constant, extending a finished run this
+way continues it seamlessly. `checkpoint.pt` always holds the latest epoch;
+`training.checkpoint_every: N` also keeps `checkpoint_epoch<N>.pt` every N
+epochs, as hard links, so intermediate models can be evaluated with
+`--checkpoint` or resumed from. Resuming rejects any override that would change the trained
 algorithm (`framework`, `mode`, `model`, `process`, or most of `training`);
 inference may freely override `data`, `inference`, `device` and `seed`.
 
@@ -156,7 +160,9 @@ clipping by default. `data.drop_last` (default `true`) applies only during
 training — inference always uses every sample. `data.pin_memory`,
 `data.persistent_workers` and `data.prefetch_factor` are passed to the
 `DataLoader` (the last two need `data.num_workers > 0`). `training.jsonl`
-records, per epoch, the mean loss and its duration in `seconds`; for
+records, per epoch, the mean loss, its duration in `seconds` and the
+`data_seconds` of it spent waiting for the `DataLoader`, a large share of
+which means data loading limits the GPU; for
 `aleatoric`/`selfcond` also `mse`, the squared error of the network output
 that `base` minimizes, and `logvar`, the mean predicted log variance
 (`calibration` with an uncertainty decoder); on CUDA, the peak GPU memory
@@ -176,7 +182,7 @@ without a TensorBoard server:
 
 - `losses.png`, after every `training.plot_every` epochs (default 1): one
   panel per quantity in `training.jsonl`, on a log scale when it stays
-  positive.
+  positive and spans more than a decade.
 - `samples.png`, every `training.sample_every` epochs (default 10) and after
   the first and the last epoch: `training.sample_count` fixed examples
   (default 2) generated with the current weights, beside their inputs,

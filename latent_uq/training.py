@@ -2,7 +2,9 @@
 from dataclasses import asdict, replace
 from pathlib import Path
 import json
+import os
 import random
+import shutil
 import time
 import numpy as np
 import torch
@@ -121,6 +123,16 @@ def _save_checkpoint(path, config, models, optimizer, scaler, epoch):
     temporary.replace(path)
 
 
+def _snapshot(checkpoint, snapshot):
+    """Keep this epoch's checkpoint under its own name. A hard link copies nothing, and it
+    stays intact because _save_checkpoint replaces checkpoint.pt with a new file."""
+    snapshot.unlink(missing_ok=True)  # A run resumed from an earlier epoch redoes this one.
+    try:
+        os.link(checkpoint, snapshot)
+    except OSError:  # Filesystems without hard links.
+        shutil.copyfile(checkpoint, snapshot)
+
+
 def validate_checkpoint_config(config, checkpoint, *, resume=False):
     """Protect the trained algorithm in both Python and CLI entry points."""
     # Filling in defaults keeps checkpoints saved before a field was added comparable.
@@ -199,7 +211,11 @@ def train(config, output_dir, *, resume=None):
         for epoch in range(start, config.training.epochs):
             started = time.perf_counter()
             total_loss, items, components = 0.0, 0, {}
+            # Time spent waiting for the DataLoader; each step ends in a GPU sync, so the rest
+            # of the epoch is compute. A large share means the data pipeline is the bottleneck.
+            waited, requested = 0.0, time.perf_counter()
             for batch in loader:
+                waited += time.perf_counter() - requested
                 condition, target = prepare_batch(batch, config, require_target=True)
                 if config.training.patch_size is not None:
                     condition, target = random_crop_pair(condition, target,
@@ -224,17 +240,20 @@ def train(config, output_dir, *, resume=None):
                 for key, value in stats.items():
                     components[key] = components.get(key, 0.0) + float(value) * len(condition)
                 items += len(condition)
+                requested = time.perf_counter()
             mean_loss = total_loss / items
             record = dict(epoch=epoch + 1, loss=mean_loss)
             record.update({key: value / items for key, value in components.items()})
             record["seconds"] = time.perf_counter() - started
+            record["data_seconds"] = waited
             if torch.device(config.device).type == "cuda":
                 # Peak since the run started, to size batch_size and patch_size.
                 record["max_memory_gb"] = torch.cuda.max_memory_allocated(config.device) / 2**30
             history.append(record)
             details = "".join(f", {key}={record[key]:.6f}" for key in components)
             print(f"Epoch {epoch+1}/{config.training.epochs}: loss={mean_loss:.6f}{details}, "
-                  f"{record['seconds'] / 60:.1f} min" +
+                  f"{record['seconds'] / 60:.1f} min, "
+                  f"data wait {100 * waited / max(record['seconds'], 1e-9):.0f}%" +
                   (f", peak GPU memory={record['max_memory_gb']:.1f} GB"
                    if "max_memory_gb" in record else ""),
                   flush=True)
@@ -258,6 +277,9 @@ def train(config, output_dir, *, resume=None):
                     writer.add_images("train/prediction", _preview(generated.image), epoch + 1)
                     writer.add_images("train/target", _preview(target), epoch + 1)
             _save_checkpoint(output / "checkpoint.pt", config, models, optimizer, scaler, epoch + 1)
+            every = config.training.checkpoint_every
+            if every and (epoch + 1) % every == 0:
+                _snapshot(output / "checkpoint.pt", output / f"checkpoint_epoch{epoch + 1:04d}.pt")
             with (output / "training.jsonl").open("a") as handle:
                 handle.write(json.dumps(history[-1]) + "\n")
             # After the checkpoint: a preview interrupted by the time limit loses nothing.

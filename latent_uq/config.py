@@ -86,6 +86,9 @@ class TrainingConfig:
     grad_clip: float | None = None
     tensorboard: bool = False
     preview_steps: int = 0
+    # Keep checkpoint_epoch<N>.pt every checkpoint_every epochs, besides checkpoint.pt,
+    # which always holds the latest epoch; 0 keeps only checkpoint.pt.
+    checkpoint_every: int = 0
     # PNG monitoring in <output_dir>/monitor/, overwritten in place (see latent_uq/monitor.py).
     plot_every: int = 1  # Epochs between losses.png updates; 0 disables it.
     # Epochs between samples.png updates, which also follow the first and the last
@@ -189,8 +192,10 @@ class Config:
             raise ValueError("inference.steps must be positive")
         if self.training.preview_steps > self.process.num_train_timesteps:
             raise ValueError("preview_steps cannot exceed process.num_train_timesteps")
-        if min(self.training.plot_every, self.training.sample_every) < 0:
-            raise ValueError("plot_every and sample_every must be nonnegative (0 disables)")
+        if min(self.training.plot_every, self.training.sample_every,
+               self.training.checkpoint_every) < 0:
+            raise ValueError("plot_every, sample_every and checkpoint_every must be nonnegative "
+                             "(0 disables)")
         if (self.training.sample_steps or 0) > self.process.num_train_timesteps:
             raise ValueError("sample_steps cannot exceed process.num_train_timesteps")
         if self.steps > self.process.num_train_timesteps:

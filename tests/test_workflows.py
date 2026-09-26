@@ -83,13 +83,27 @@ def test_monitor_pngs_leave_training_unchanged(config_factory, tmp_path):
         for line in (tmp_path / "monitored/training.jsonl").read_text().splitlines()
     ]
     assert [record["epoch"] for record in records] == [1, 2]
-    assert all({"loss", "mse", "logvar", "seconds"} <= record.keys() for record in records)
+    assert all({"loss", "mse", "logvar", "seconds", "data_seconds"} <= record.keys()
+               for record in records)
     config.training.plot_every = config.training.sample_every = 0
     plain = load_checkpoint(train(config, tmp_path / "plain"))
     assert not (tmp_path / "plain/monitor").exists()
     for name in ("backbone", "context"):
         for key, value in plain["models"][name].items():
             torch.testing.assert_close(value, monitored["models"][name][key], rtol=0, atol=0)
+
+
+def test_checkpoint_snapshots_survive_later_epochs(config_factory, tmp_path):
+    config = config_factory("dm", "base")
+    config.training.epochs = 3
+    config.training.checkpoint_every = 2
+    config.training.plot_every = config.training.sample_every = 0
+    train(config, tmp_path / "train")
+    snapshots = sorted(path.name for path in (tmp_path / "train").glob("checkpoint_epoch*.pt"))
+    assert snapshots == ["checkpoint_epoch0002.pt"]
+    # checkpoint.pt was rewritten at epoch 3; the snapshot must still hold epoch 2.
+    assert load_checkpoint(tmp_path / "train/checkpoint_epoch0002.pt")["epoch"] == 2
+    assert load_checkpoint(tmp_path / "train/checkpoint.pt")["epoch"] == 3
 
 
 @pytest.mark.parametrize("framework,mode", [("lfm", "selfcond"), ("ldm", "aleatoric")])
@@ -248,6 +262,7 @@ def test_cli_inference_from_explicit_legacy_weights(config_factory, tmp_path):
     ("training", "tensorboard", "false"),
     ("training", "min_logvar", -100),
     ("training", "plot_every", -1),
+    ("training", "checkpoint_every", -1),
     ("training", "sample_count", 0),
     ("training", "sample_steps", 0),
     ("training", "sample_data", ["split"]),
