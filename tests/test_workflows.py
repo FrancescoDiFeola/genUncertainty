@@ -71,6 +71,27 @@ def test_resume_matches_uninterrupted_training(config_factory, tmp_path):
         train(config, tmp_path / "resumed", resume=checkpoint)
 
 
+def test_monitor_pngs_leave_training_unchanged(config_factory, tmp_path):
+    config = config_factory("fm")
+    config.training.epochs = 2
+    config.training.sample_every = 1
+    monitored = load_checkpoint(train(config, tmp_path / "monitored"))
+    for name in ("losses.png", "samples.png"):
+        assert (tmp_path / "monitored/monitor" / name).read_bytes().startswith(b"\x89PNG")
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "monitored/training.jsonl").read_text().splitlines()
+    ]
+    assert [record["epoch"] for record in records] == [1, 2]
+    assert all({"loss", "mse", "logvar", "seconds"} <= record.keys() for record in records)
+    config.training.plot_every = config.training.sample_every = 0
+    plain = load_checkpoint(train(config, tmp_path / "plain"))
+    assert not (tmp_path / "plain/monitor").exists()
+    for name in ("backbone", "context"):
+        for key, value in plain["models"][name].items():
+            torch.testing.assert_close(value, monitored["models"][name][key], rtol=0, atol=0)
+
+
 @pytest.mark.parametrize("framework,mode", [("lfm", "selfcond"), ("ldm", "aleatoric")])
 def test_real_monai_unet_vae_and_optional_calibration(config_factory, tmp_path, framework, mode):
     config = config_factory(framework, mode)
@@ -226,6 +247,10 @@ def test_cli_inference_from_explicit_legacy_weights(config_factory, tmp_path):
     ("inference", "analyses", ["typo"]),
     ("training", "tensorboard", "false"),
     ("training", "min_logvar", -100),
+    ("training", "plot_every", -1),
+    ("training", "sample_count", 0),
+    ("training", "sample_steps", 0),
+    ("training", "sample_data", ["split"]),
 ])
 def test_invalid_config_rejected(config_factory, section, key, value):
     config = config_factory()

@@ -186,7 +186,13 @@ def main(argv=None):
                                                      config.training.pad_value)
             with torch.no_grad():
                 loss = train_step(condition, target, models, Process(config), config)
-            print(f"Training dry run passed: loss={float(loss):.6f}")
+            message = f"Training dry run passed: loss={float(loss):.6f}"
+            if config.training.plot_every or config.training.sample_every:
+                from .monitor import Monitor
+                # Checks matplotlib and loads the monitoring examples; writes nothing.
+                examples = Monitor(config, args.output_dir).examples
+                message += f", {len(examples)} monitoring examples"
+            print(message)
         else:
             print(train(config, args.output_dir, resume=args.resume))
     else:

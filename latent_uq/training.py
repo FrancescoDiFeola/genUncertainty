@@ -3,12 +3,13 @@ from dataclasses import asdict, replace
 from pathlib import Path
 import json
 import random
+import time
 import numpy as np
 import torch
 from .config import Config, _construct, save_config
 from .data import make_loader, prepare_batch, random_crop_pair
 from .models import build_models, encode, decode, encode_context, predict, zero_context
-
+from .monitor import Monitor
 from .process import Process, heteroscedastic_loss
 from .utils import finite, seed_everything
 
@@ -16,7 +17,9 @@ CHECKPOINT_VERSION = 2  # Version 1 used different self-conditioning and flow al
 MODEL_PARTS = ("backbone", "context", "vae", "uncertainty_decoder")
 
 
-def train_step(condition, target, models, process, config):
+def train_step(condition, target, models, process, config, stats=None):
+    """Loss of one batch. A stats dictionary, if given, receives detached components of
+    the loss for monitoring; it never changes the loss."""
     pixel_target = target
     condition, target = encode(models, condition, config), encode(models, target, config)
     if condition.shape[2:] != target.shape[2:]:
@@ -40,6 +43,10 @@ def train_step(condition, target, models, process, config):
             loss = config.training.loss_weight * heteroscedastic_loss(
                 prediction, logvar, objective, config.training.regularization,
                 config.training.min_logvar)
+            if stats is not None:
+                # Base mode's loss, comparable across modes and free of the variance terms.
+                stats["mse"] = (prediction.detach().float() - objective.float()).square().mean()
+                stats["logvar"] = logvar.detach().float().mean()
         if models.uncertainty_decoder is not None:
             alpha = process.train_scheduler.alphas_cumprod.to(noisy.device)[times].reshape(
                 -1, 1, 1, 1)
@@ -49,7 +56,10 @@ def train_step(condition, target, models, process, config):
             estimate = models.uncertainty_decoder(logvar.clamp(-10, 10).float())
             if estimate.shape != error.shape:
                 raise ValueError("Uncertainty decoder output must match the image-space error map")
-            loss = loss + config.training.calibration_weight * calibration_loss(estimate, error)
+            calibration = calibration_loss(estimate, error)
+            loss = loss + config.training.calibration_weight * calibration
+            if stats is not None:
+                stats["calibration"] = calibration.detach()
     return finite(loss, "training loss")
 
 
@@ -142,6 +152,10 @@ def train(config, output_dir, *, resume=None):
     if checkpoint:
         validate_checkpoint_config(config, checkpoint, resume=True)
     loader = make_loader(config, training=True)
+    # Built before any output exists, so a monitoring setup error does not leave behind
+    # a directory that only --resume accepts. It never moves the random state.
+    monitor = Monitor(config, output) if (config.training.plot_every
+                                          or config.training.sample_every) else None
     models = build_models(config, initialize=checkpoint is None)
     if checkpoint:
         restore_models(models, checkpoint)
@@ -183,7 +197,8 @@ def train(config, output_dir, *, resume=None):
     history = []
     try:
         for epoch in range(start, config.training.epochs):
-            total_loss, items = 0.0, 0
+            started = time.perf_counter()
+            total_loss, items, components = 0.0, 0, {}
             for batch in loader:
                 condition, target = prepare_batch(batch, config, require_target=True)
                 if config.training.patch_size is not None:
@@ -191,7 +206,8 @@ def train(config, output_dir, *, resume=None):
                                                          config.training.patch_size,
                                                          config.training.pad_value)
                 optimizer.zero_grad(set_to_none=True)
-                loss = train_step(condition, target, models, process, config)
+                stats = {}
+                loss = train_step(condition, target, models, process, config, stats)
                 scaler.scale(loss).backward()
                 scaler.unscale_(optimizer)
                 if config.training.grad_clip is not None:
@@ -205,18 +221,27 @@ def train(config, output_dir, *, resume=None):
                 scaler.step(optimizer)
                 scaler.update()
                 total_loss += float(loss.detach()) * len(condition)
+                for key, value in stats.items():
+                    components[key] = components.get(key, 0.0) + float(value) * len(condition)
                 items += len(condition)
             mean_loss = total_loss / items
             record = dict(epoch=epoch + 1, loss=mean_loss)
+            record.update({key: value / items for key, value in components.items()})
+            record["seconds"] = time.perf_counter() - started
             if torch.device(config.device).type == "cuda":
                 # Peak since the run started, to size batch_size and patch_size.
                 record["max_memory_gb"] = torch.cuda.max_memory_allocated(config.device) / 2**30
             history.append(record)
-            print(f"Epoch {epoch+1}/{config.training.epochs}: loss={mean_loss:.6f}" +
+            details = "".join(f", {key}={record[key]:.6f}" for key in components)
+            print(f"Epoch {epoch+1}/{config.training.epochs}: loss={mean_loss:.6f}{details}, "
+                  f"{record['seconds'] / 60:.1f} min" +
                   (f", peak GPU memory={record['max_memory_gb']:.1f} GB"
-                   if "max_memory_gb" in record else ""))
+                   if "max_memory_gb" in record else ""),
+                  flush=True)
             if writer:
                 writer.add_scalar("train/loss", mean_loss, epoch + 1)
+                for key in components:
+                    writer.add_scalar(f"train/{key}", record[key], epoch + 1)
                 if config.training.preview_steps:
                     from .sampling import sample
                     preview = replace(config,
@@ -235,6 +260,9 @@ def train(config, output_dir, *, resume=None):
             _save_checkpoint(output / "checkpoint.pt", config, models, optimizer, scaler, epoch + 1)
             with (output / "training.jsonl").open("a") as handle:
                 handle.write(json.dumps(history[-1]) + "\n")
+            # After the checkpoint: a preview interrupted by the time limit loses nothing.
+            if monitor is not None:
+                monitor.after_epoch(epoch + 1, models)
     finally:
         if writer:
             writer.close()

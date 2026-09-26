@@ -45,6 +45,12 @@ process:
 training:
   epochs: 100
   amp: true
+  # PNG monitoring in <output-dir>/monitor/, overwritten in place (see README, "Monitoring").
+  plot_every: 1                        # losses.png after every epoch
+  sample_every: 10                     # samples.png every 10 epochs, and after the first/last
+  sample_count: 2                      # held-out volumes shown in samples.png
+  sample_steps: null                   # null: inference.steps (50 DDIM / 30 flow steps)
+  sample_data: {split: val}            # whole val volumes, sliding-window sampled as below
 
 inference:
   patch_size: 96

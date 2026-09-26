@@ -10,3 +10,4 @@ __pycache__/
 /examples/data/
 /hpc/
 .idea/
+/folds_brats2021_gli/

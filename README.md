@@ -97,7 +97,8 @@ The full schema and defaults live in [config.py](latent_uq/config.py);
 
 ### Checkpoints
 
-A training run saves `checkpoint.pt`, `config.yaml` and `training.jsonl`.
+A training run saves `checkpoint.pt`, `config.yaml`, `training.jsonl` and
+the `monitor/` images (see [Monitoring](#monitoring)).
 The checkpoint holds the full model state — including a frozen VAE, if any —
 plus the optimizer, AMP scaler, configuration and RNG state, so a run
 resumes exactly where it left off:
@@ -154,14 +155,42 @@ learning rate `1.5e-5`, weight decay `0.01`), with CUDA AMP and no gradient
 clipping by default. `data.drop_last` (default `true`) applies only during
 training — inference always uses every sample. `data.pin_memory`,
 `data.persistent_workers` and `data.prefetch_factor` are passed to the
-`DataLoader` (the last two need `data.num_workers > 0`). On CUDA,
-`training.jsonl` also records the peak GPU memory of the run so far.
+`DataLoader` (the last two need `data.num_workers > 0`). `training.jsonl`
+records, per epoch, the mean loss and its duration in `seconds`; for
+`aleatoric`/`selfcond` also `mse`, the squared error of the network output
+that `base` minimizes, and `logvar`, the mean predicted log variance
+(`calibration` with an uncertainty decoder); on CUDA, the peak GPU memory
+of the run so far.
 
 Self-conditioning trains with two forward passes per step: a gradient-free
 pass with zero context produces an initial variance estimate, which becomes
 the cross-attention context for a second, optimized forward pass on the
 same noisy state and timestep. The context encoder is trained jointly with
 the backbone, identically for all four frameworks.
+
+### Monitoring
+
+Training keeps two PNGs up to date in `<output-dir>/monitor/`, each replaced
+in place, so an image viewer or an editor tab shows the latest state
+without a TensorBoard server:
+
+- `losses.png`, after every `training.plot_every` epochs (default 1): one
+  panel per quantity in `training.jsonl`, on a log scale when it stays
+  positive.
+- `samples.png`, every `training.sample_every` epochs (default 10) and after
+  the first and the last epoch: `training.sample_count` fixed examples
+  (default 2) generated with the current weights, beside their inputs,
+  target, absolute error and, for `aleatoric`/`selfcond`, the propagated
+  standard deviation. Volumes show the central slice of their last axis.
+
+The examples are evenly spaced over the training data, or over the dataset
+that `data.kwargs` updated with `training.sample_data` selects, for example
+`{split: val}` for held-out BraTS volumes. Sampling follows the `inference`
+settings, including sliding windows, with `training.sample_steps` steps if
+set. Examples are drawn and generated under a fixed seed, with every random
+state restored afterwards, so monitoring never changes training; a
+monitoring failure is reported on stderr and training continues. Setting
+`plot_every` and `sample_every` to 0 disables monitoring.
 
 ## Inference and uncertainty estimation
 

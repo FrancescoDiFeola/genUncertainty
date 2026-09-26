@@ -86,6 +86,16 @@ class TrainingConfig:
     grad_clip: float | None = None
     tensorboard: bool = False
     preview_steps: int = 0
+    # PNG monitoring in <output_dir>/monitor/, overwritten in place (see latent_uq/monitor.py).
+    plot_every: int = 1  # Epochs between losses.png updates; 0 disables it.
+    # Epochs between samples.png updates, which also follow the first and the last
+    # epoch; 0 disables it.
+    sample_every: int = 10
+    sample_count: int = 2  # Fixed examples, evenly spaced over the monitoring dataset.
+    sample_steps: int | None = None  # Sampling steps; null uses inference.steps.
+    # data.kwargs overrides selecting the monitoring dataset, e.g. {split: val} for
+    # BraTS; empty uses the training data.
+    sample_data: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -160,8 +170,10 @@ class Config:
             "context_tokens": self.model.context_tokens,
             "num_train_timesteps": self.process.num_train_timesteps,
             "window_batch_size": self.inference.window_batch_size,
+            "sample_count": self.training.sample_count,
         }
         for name, value in dict(last_k=self.inference.last_k,
+                                sample_steps=self.training.sample_steps,
                                 data_range=self.inference.data_range,
                                 flow_base_size=self.process.flow_base_size,
                                 flow_inference_base_size=self.process.flow_inference_base_size,
@@ -177,6 +189,10 @@ class Config:
             raise ValueError("inference.steps must be positive")
         if self.training.preview_steps > self.process.num_train_timesteps:
             raise ValueError("preview_steps cannot exceed process.num_train_timesteps")
+        if min(self.training.plot_every, self.training.sample_every) < 0:
+            raise ValueError("plot_every and sample_every must be nonnegative (0 disables)")
+        if (self.training.sample_steps or 0) > self.process.num_train_timesteps:
+            raise ValueError("sample_steps cannot exceed process.num_train_timesteps")
         if self.steps > self.process.num_train_timesteps:
             raise ValueError("inference.steps cannot exceed process.num_train_timesteps")
         if not 0 < self.process.beta_start < self.process.beta_end < 1:

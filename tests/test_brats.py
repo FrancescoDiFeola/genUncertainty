@@ -175,6 +175,20 @@ def test_3d_patch_training_and_whole_volume_inference(brats, tmp_path, framework
     assert (tmp_path / "infer/metrics_brain.csv").exists()  # The default evaluation region.
 
 
+def test_monitor_samples_whole_held_out_volumes(brats, tmp_path):
+    from latent_uq.monitor import load_examples
+    from latent_uq.training import train
+
+    _, _, _, kwargs = brats
+    config = volume_config(kwargs, "dm", "selfcond")
+    config.training.sample_data = {"split": "test"}
+    (example, ) = load_examples(config)  # The test split holds one subject.
+    assert example["name"] == "BraTS-GLI-00002-000"
+    assert example["condition"].shape == (1, 3, *SHAPE)  # A whole volume, not a patch.
+    train(config, tmp_path / "train")
+    assert (tmp_path / "train/monitor/samples.png").read_bytes().startswith(b"\x89PNG")
+
+
 def test_3d_building_blocks_and_validation():
     condition = torch.rand(2, 1, 3, 5, 7)
     cropped, paired = random_crop_pair(condition, condition.clone(), 4)
