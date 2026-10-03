@@ -1,0 +1,44 @@
+# Step 1: the autoencoder ceiling on brain tumor MRI. Inference only.
+# Plan and criteria: docs/idea_traduzione_senza_vae.md, section 6, "Step 1 in dettaglio".
+# Run: python scripts/audit_vae.py --config configs/audit_maisi.yaml --output-dir runs/audit/<name>
+data:
+  cache_dir: /nobackup/proj/disk/naiss2023-6-336/shared/datasets/BraTS_cached
+  # Patient-level fold from scripts/make_patient_splits.py, never the original fold files.
+  split_file: /nobackup/proj/disk/naiss2023-6-336/personal/difra/genUncertainty/folds_patient/fold0.json
+  split: test
+  modality: t1ce
+  max_subjects: null                   # e.g. 10 for a first check
+
+representations:
+  - {type: identity}                   # control: zero loss
+  - {type: haar, levels: 2}            # exact control, MAISI's grid with 64 values per position
+  - {type: downsample, factor: 4, mode: trilinear}
+  - type: maisi                        # shared by NV-Generate-MR-Brain
+    # From NV-Generate-CTMR: the autoencoder_def section of configs/config_network_rflow.json,
+    # and the autoencoder weights it names (download once, outside the repository).
+    network_config: /path/to/NV-Generate-CTMR/configs/config_network_rflow.json
+    weights: /path/to/maisi_autoencoder.pt
+    num_splits: 1                      # exact tensor splitting if memory requires; no sliding window
+    half_precision: false              # compare with true on a few volumes, then fix and declare
+
+analyses: [global, lesions, frequency, synthetic]
+
+lesions:
+  min_voxels: 3
+  shell_mm: 2.5
+  detection_fraction: 0.10
+
+synthetic:
+  hosts: 20                            # subjects that receive synthetic lesions
+  per_volume: 15
+  diameters_mm: [1, 2, 3, 4, 6, 8, 10, 12, 16, 20]
+  # Provisional; recalibrate from the real lesions of analysis B
+  # (synthetic.calibrate_contrasts) before the final run.
+  contrasts: [0.1, 0.2, 0.4]
+  shapes: [sphere, ring]
+  ring_thickness_mm: 2
+  seed: 0
+
+# Fixed BraTS segmenter for lesion detection; null skips detection.
+# e.g. {kind: monai_bundle, weights: /path/to/model.pt} or {kind: nnunet, weights: /path}
+segmenter: null
