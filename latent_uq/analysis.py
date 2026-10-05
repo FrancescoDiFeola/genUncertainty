@@ -150,7 +150,7 @@ def _calibration_bins(uncertainty, error):
 
 
 def analyze(target, prediction, uncertainty, *, analysis='metrics', config=None, data_range=None):
-    """Evaluate one selected analysis, preserving its mask, reduction and normalization."""
+    """Evaluate one selected analysis with its own reduction and normalization."""
     if target.shape != prediction.shape or target.ndim != 3:
         raise ValueError('Analysis requires matching C,H,W target and prediction')
     if not np.isfinite(target).all() or not np.isfinite(prediction).all():
@@ -188,11 +188,6 @@ def analyze(target, prediction, uncertainty, *, analysis='metrics', config=None,
     if reference and reference.metrics_kind == 'summary' and uncertainty is not None:
         return {'metrics': [_summary(uncertainty[0], error[0])]}
     gt, pred = target[0], prediction[0]
-    # Without an uncertainty map, target pixels equal to zero are masked out and the
-    # remaining foreground is flattened before computing MSE/PSNR/SSIM.
-    if uncertainty is None:
-        mask = gt != 0
-        gt, pred = gt[mask], pred[mask]
     value_range = float(np.ptp(target[0])) if data_range is None else data_range
     mse = float(np.mean((gt - pred)**2)) if gt.size else None
     metrics = dict(mse=mse, psnr=None, ssim=None)

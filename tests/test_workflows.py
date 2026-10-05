@@ -305,6 +305,18 @@ def test_analysis_ideal_and_uninformative_rankings():
     assert analyze(target[:, :2, :2], target[:, :2, :2], None)["metrics"][0]["ssim"] is None
 
 
+def test_metrics_evaluate_the_whole_image_without_uncertainty():
+    from skimage.metrics import structural_similarity
+    rng = np.random.default_rng(0)
+    target = rng.uniform(-1, 1, (1, 16, 16)).astype(np.float32)
+    target[0, :4] = 0
+    prediction = (target + rng.normal(0, 0.1, target.shape)).astype(np.float32)
+    row = analyze(target, prediction, None)["metrics"][0]
+    assert row["mse"] == pytest.approx(float(np.mean((target - prediction)**2)))
+    assert row["ssim"] == pytest.approx(
+        structural_similarity(target[0], prediction[0], data_range=float(np.ptp(target[0]))))
+
+
 def test_python_inference_rejects_changed_algorithm(config_factory, tmp_path):
     config = config_factory("dm")
     checkpoint = load_checkpoint(train(config, tmp_path / "train"))

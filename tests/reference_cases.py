@@ -63,7 +63,7 @@ def seed():
 def images():
     condition = torch.linspace(-0.7, 0.8, 64).reshape(1, 1, 8, 8)
     target = condition.flip(-1) * 0.8 + torch.linspace(0, 0.3, 8).reshape(1, 1, 8, 1)
-    target[0, 0, 0, 0] = 0  # Exercise the vanilla foreground mask.
+    target[0, 0, 0, 0] = 0
     target[0, 0, 0, 1] = -1  # Exercise the summary foreground mask.
     return condition, target
 

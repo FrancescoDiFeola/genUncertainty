@@ -60,12 +60,12 @@ class Process:
             return self.sample_scheduler.step(prediction, timestep, state, eta=0.0)[0]
         return self.sample_scheduler.step(prediction, timestep, state, next_timestep)[0]
 
-    def variance_factor(self, timestep, next_timestep=None, *, flow_dt_squared=False):
+    def variance_factor(self, timestep, next_timestep=None):
         if self.config.diffusion:
             alpha = self.sample_scheduler.alphas_cumprod[timestep.long()]
             return (1 - alpha) / (alpha + 1e-8)
-        # See Reference.flow_dt_squared for which fm analyses set this to True.
-        return 1 / self.config.steps**2 if flow_dt_squared else 1.0
+        # An Euler step of length dt = 1/steps moves the state by dt times the velocity.
+        return 1 / self.config.steps**2
 
 
 def heteroscedastic_loss(prediction, logvar, target, regularization=0.001, min_logvar=-7.0):

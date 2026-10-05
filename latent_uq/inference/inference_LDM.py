@@ -37,12 +37,10 @@ REFERENCES = {
 
 def reference(config, analysis="metrics"):
     last_k = 10
-    flow_dt_squared = False
     selected = select_reference(config,
                                 analysis,
                                 REFERENCES,
                                 last_k=last_k,
-                                flow_dt_squared=flow_dt_squared,
                                 context_autocast=True,
                                 context_concat_allowed=True)
     return replace(selected, sparsification_kind="fast" if config.mode == "base" else "standard")

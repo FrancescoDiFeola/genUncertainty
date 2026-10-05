@@ -83,14 +83,14 @@ def test_sampler_extra_initial_pass_and_final_excluded_factor(config_factory, fr
         alpha = schedule.sample_scheduler.alphas_cumprod[times[-3:-1]]
         factor = ((1 - alpha) / (alpha + 1e-8)).mean()
     else:
-        factor = torch.tensor(1 / config.steps**2)
+        factor = torch.tensor(len(times[-3:-1]) / config.steps**2)
     torch.testing.assert_close(
         result.variance,
         models.backbone.logvar.detach().exp().expand_as(result.variance) * factor)
     assert models.backbone.training  # Sampling restores model state.
 
 
-def test_ablation_encodes_zero_maps_and_omits_flow_variance_factor(config_factory):
+def test_ablation_encodes_zero_maps_and_keeps_flow_variance_factor(config_factory):
     config = config_factory("fm")
     config.inference.self_conditioning = False
     models = build_models(config)
@@ -98,7 +98,25 @@ def test_ablation_encodes_zero_maps_and_omits_flow_variance_factor(config_factor
     assert not models.backbone.calls[0][2].any()
     assert len(models.context.inputs) == config.steps
     assert all(not value.any() for value in models.context.inputs)
-    torch.testing.assert_close(result.variance, torch.full_like(result.variance, math.exp(-1)))
+    expected = config.inference.last_k * math.exp(-1) / config.steps**2
+    torch.testing.assert_close(result.variance, torch.full_like(result.variance, expected))
+
+
+def test_lfm_decodes_perturbations_from_summed_flow_variance(config_factory, monkeypatch):
+    from latent_uq.inference import common
+    config = config_factory("lfm")
+    models = build_models(config)
+    latents, decode = [], common.decode
+
+    def recording_decode(models, latent, config):
+        latents.append(latent)
+        return decode(models, latent, config)
+
+    monkeypatch.setattr(common, "decode", recording_decode)
+    monkeypatch.setattr(torch, "randn_like", torch.ones_like)  # perturbation = sigma
+    sample(torch.zeros(1, 1, 8, 8), models, config)
+    variance = config.inference.last_k * models.backbone.logvar.detach().exp() / config.steps**2
+    torch.testing.assert_close(latents[1] - latents[0], variance.sqrt().expand_as(latents[0]))
 
 
 def test_flow_steps_retain_reference_timestep_truncation(config_factory):
@@ -143,7 +161,7 @@ def test_latent_channel_variance_and_scaling(config_factory):
     # Use a linear decoder whose exact propagated variance is known for unequal channels.
     models.vae.decode = lambda z: 2 * z[:, :1] + 3 * z[:, 1:2]
     result = sample(image, models, config)
-    expected = (4 * math.exp(-1) + 9) / 2.5**2
+    expected = config.inference.last_k / config.steps**2 * (4 * math.exp(-1) + 9) / 2.5**2
     assert abs(float(result.variance.mean()) - expected) / expected < 0.03
 
 

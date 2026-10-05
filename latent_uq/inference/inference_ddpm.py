@@ -37,12 +37,7 @@ REFERENCES = {
 
 def reference(config, analysis="metrics"):
     last_k = 10
-    flow_dt_squared = False
-    selected = select_reference(config,
-                                analysis,
-                                REFERENCES,
-                                last_k=last_k,
-                                flow_dt_squared=flow_dt_squared)
+    selected = select_reference(config, analysis, REFERENCES, last_k=last_k)
     # dm/selfcond's metrics analysis reports MAE and the uncertainty-summary
     # statistics instead of MSE/PSNR/SSIM (the ablation still uses the latter).
     summary = config.mode == "selfcond" and config.inference.self_conditioning

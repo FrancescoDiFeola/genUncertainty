@@ -18,7 +18,6 @@ class Reference:
     last_k: int = 10
     samples: int = 10
     decode_samples: int = 20
-    flow_dt_squared: bool = False
     posthoc_prediction: str = "mean"
     metrics_kind: str = "reconstruction"
     calibration_bins: bool = False
@@ -83,9 +82,7 @@ def trajectory(encoded, models, config, reference, process, times, *, propagate)
         with torch.autocast(device_type=state.device.type, enabled=amp):
             prediction, logvar = predict(models, model_input, model_time, config, context)
         if propagate and len(times) - reference.last_k - 1 <= index < len(times) - 1:
-            factor = process.variance_factor(timestep,
-                                             next_timestep,
-                                             flow_dt_squared=reference.flow_dt_squared)
+            factor = process.variance_factor(timestep, next_timestep)
             variance_sum += factor * logvar.float().exp()
             count += 1
         state = process.step(prediction, state, timestep, next_timestep)
@@ -93,7 +90,10 @@ def trajectory(encoded, models, config, reference, process, times, *, propagate)
     pixels = decode(models, finite(state, 'final state'), config)
     if not propagate:
         return Prediction(pixels, None)
-    state_variance = finite(variance_sum / max(count, 1), 'state variance')
+    # Diffusion averages per-step clean-state variances; flow matching sums the variances
+    # of its Euler increments.
+    state_variance = variance_sum / max(count, 1) if config.diffusion else variance_sum
+    state_variance = finite(state_variance, 'state variance')
     if models.vae is None:
         return Prediction(pixels, state_variance)
     sigma = state_variance.clamp_min(1e-12).sqrt()
@@ -136,7 +136,6 @@ def select_reference(config,
                      names,
                      *,
                      last_k=10,
-                     flow_dt_squared=False,
                      context_autocast=False,
                      context_concat_allowed=False):
     if analysis not in {'metrics', 'sparsification', 'calibration', 'uncertainty_summary'}:
@@ -167,5 +166,4 @@ def select_reference(config,
     return Reference(names[config.mode][analysis],
                      last_k=last_k,
                      decode_samples=10 if config.mode == 'aleatoric' else 20,
-                     flow_dt_squared=flow_dt_squared,
                      **shared)

@@ -121,7 +121,7 @@ def _infer_one(config, checkpoint, output, *, dry_run=False):
         last_k=min(reference.last_k, max(config.steps - 1, 0)),
         decode_samples=reference.decode_samples
         if config.latent and config.uncertainty == 'propagated' else 0,
-        flow_dt_squared=reference.flow_dt_squared,
+        variance_aggregation='mean' if config.diffusion else 'sum',
         variance_denominator='N',
         seed=config.seed,
         torch=str(torch.__version__),

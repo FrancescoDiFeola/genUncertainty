@@ -36,12 +36,7 @@ REFERENCES = {
 
 def reference(config, analysis="metrics"):
     last_k = 10 if config.mode == "selfcond" and analysis == "sparsification" else 30
-    flow_dt_squared = config.mode == "selfcond" and analysis != "sparsification" and config.inference.self_conditioning
-    selected = select_reference(config,
-                                analysis,
-                                REFERENCES,
-                                last_k=last_k,
-                                flow_dt_squared=flow_dt_squared)
+    selected = select_reference(config, analysis, REFERENCES, last_k=last_k)
     return replace(selected,
                    calibration_bins=analysis == "metrics" and config.mode != "base"
                    and config.uncertainty != "none",
